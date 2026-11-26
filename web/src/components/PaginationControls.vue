@@ -1,14 +1,14 @@
 <template>
-  <nav class="pagination-controls" :aria-label="label" :aria-busy="loading">
-    <span class="pagination-controls-summary" aria-live="polite">共 {{ total }} 条<span v-if="total">，第 {{ firstItem }}–{{ lastItem }} 条</span></span>
+  <nav class="pagination-controls" :class="{ 'pagination-controls--compact': compact }" :aria-label="label" :aria-busy="loading">
+    <span v-if="!compact" class="pagination-controls-summary" aria-live="polite">共 {{ total }} 条<span v-if="total">，第 {{ firstItem }}–{{ lastItem }} 条</span></span>
     <div class="pagination-controls-actions">
-      <SelectMenu class="pagination-controls-size" :model-value="pageSize" :options="sizeOptions" aria-label="每页条数" :disabled="loading" @update:model-value="changeSize" />
-      <button class="icon-button" type="button" title="首页" aria-label="首页" :disabled="loading || page <= 1" @click="changePage(1)"><ChevronsLeft :size="15" /></button>
+      <SelectMenu v-if="!compact" class="pagination-controls-size" :model-value="pageSize" :options="sizeOptions" aria-label="每页条数" :disabled="loading" @update:model-value="changeSize" />
+      <button v-if="!compact" class="icon-button" type="button" title="首页" aria-label="首页" :disabled="loading || page <= 1" @click="changePage(1)"><ChevronsLeft :size="15" /></button>
       <button class="icon-button" type="button" title="上一页" aria-label="上一页" :disabled="loading || page <= 1" @click="changePage(page - 1)"><ChevronLeft :size="15" /></button>
       <span class="pagination-controls-status">{{ page }} / {{ totalPages }} 页</span>
       <button class="icon-button" type="button" title="下一页" aria-label="下一页" :disabled="loading || page >= totalPages" @click="changePage(page + 1)"><ChevronRight :size="15" /></button>
-      <button class="icon-button" type="button" title="末页" aria-label="末页" :disabled="loading || page >= totalPages" @click="changePage(totalPages)"><ChevronsRight :size="15" /></button>
-      <form class="pagination-controls-jump" novalidate @submit.prevent="jumpToPage">
+      <button v-if="!compact" class="icon-button" type="button" title="末页" aria-label="末页" :disabled="loading || page >= totalPages" @click="changePage(totalPages)"><ChevronsRight :size="15" /></button>
+      <form v-if="!compact" class="pagination-controls-jump" novalidate @submit.prevent="jumpToPage">
         <span>前往</span>
         <input v-model="targetPage" class="form-input pagination-controls-page-input" type="number" inputmode="numeric" min="1" :max="totalPages" step="1" aria-label="跳转页码" :aria-invalid="!validTarget" :disabled="loading || totalPages <= 1" />
         <span>页</span>
@@ -30,6 +30,7 @@ const props = defineProps({
   total: { type: Number, default: 0 },
   loading: { type: Boolean, default: false },
   label: { type: String, default: '列表分页' },
+  compact: Boolean,
 })
 const emit = defineEmits(['page-change', 'page-size-change'])
 const sizeOptions = PAGE_SIZE_OPTIONS.map(value => ({ value, label: value + ' 条 / 页' }))
@@ -69,4 +70,6 @@ function jumpToPage() {
   .pagination-controls-size { grid-column: 1 / -1; justify-self: end; margin: 0 0 var(--space-4); }
   .pagination-controls-jump { grid-column: 1 / -1; justify-self: end; margin: var(--space-4) 0 0; }
 }
+.pagination-controls--compact { justify-content: center; padding: var(--space-8) 0 0; }
+.pagination-controls--compact .pagination-controls-actions { display: flex; width: auto; justify-content: center; }
 </style>

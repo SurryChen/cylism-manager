@@ -162,6 +162,7 @@
 import DataTable from '../../components/DataTable.vue'
 import TableActionCell from '../../components/TableActionCell.vue'
 import { releasePayload } from './migration.js'
+import { runtimeBadge, runtimeLabel } from './runtime-utils.js'
 import ResourcePagination from '../../components/ResourcePagination.vue'
 import { useListPage } from '../../composables/useListPage.js'
 import { computed, ref, watch } from 'vue'
@@ -326,8 +327,6 @@ function newApplicationForm() { return { projectID: 0, environmentID: 0, applica
 function newReleaseForm() { return { template_id: 0, version: '', migration_target: '' } }
 function releaseBadge(status) { return status === 'succeeded' ? 'badge-online' : status === 'failed' ? 'badge-danger' : 'badge-offline' }
 function releaseLabel(status) { return status === 'succeeded' ? '成功' : status === 'failed' ? '失败' : status === 'migrating' ? '数据库迁移中' : '发布中' }
-function runtimeBadge(status) { return status === 'running' ? 'badge-online' : status === 'deploying' ? 'badge-deploying' : status === 'not_released' || status === 'unknown' ? 'badge-offline' : 'badge-danger' }
-function runtimeLabel(status) { return ({ running: '运行中', deploying: '发布中', degraded: '异常', unavailable: '不可用', not_released: '未发布', unknown: '未知' })[status] || '未知' }
 function applicationCount(projectID) { return applications.value.filter(app => app.project_id === projectID).length }
 function clusterName(clusterID) { return clusters.value.find(cluster => cluster.id === Number(clusterID))?.name || (clusterID ? `集群 #${clusterID}` : '未绑定集群') }
 

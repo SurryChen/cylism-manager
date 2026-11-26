@@ -55,6 +55,7 @@ DELETE /api/nodes/:id
 DELETE /api/products/:id
 DELETE /api/products/:id/github/repositories/:bindingID
 DELETE /api/products/:id/lifecycle/release-units/:recordID
+DELETE /api/products/:id/lifecycle/task-groups/:recordID
 DELETE /api/products/:id/lifecycle/tasks/:recordID
 DELETE /api/projects/:projectID
 DELETE /api/projects/:projectID/environments/:environmentID

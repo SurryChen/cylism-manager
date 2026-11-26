@@ -10,6 +10,7 @@ var ErrProductChannelInUse = errors.New("渠道已有发行历史，不能移除
 var ErrProductVersionName = errors.New("该发布端已有同名版本")
 var ErrProductReleaseUnitName = errors.New("该项目已有同名发布端")
 var ErrProductReleaseUnitInUse = errors.New("该发布端已关联版本、渠道或 GitHub 仓库")
+var ErrProductTaskGroupName = errors.New("该项目已有同名待办分组")
 var ErrProductChannelReleaseUnit = errors.New("发行渠道与版本所属的发布端不一致")
 
 type ProductReleaseUnit struct {
@@ -18,10 +19,18 @@ type ProductReleaseUnit struct {
 	Name      string `gorm:"size:128;uniqueIndex:idx_product_release_unit_name;not null" json:"name"`
 }
 
+type ProductTaskGroup struct {
+	ID        uint   `gorm:"primaryKey" json:"id"`
+	ProductID uint   `gorm:"uniqueIndex:idx_product_task_group_name;not null" json:"product_id"`
+	Name      string `gorm:"size:64;uniqueIndex:idx_product_task_group_name;not null" json:"name"`
+}
+
 // ProductTask is a lightweight requirement, defect or action. Versions are optional.
 type ProductTask struct {
 	ID         uint      `gorm:"primaryKey" json:"id"`
 	ProductID  uint      `gorm:"index;not null" json:"product_id"`
+	GroupID    uint      `gorm:"index;not null;default:0" json:"group_id"`
+	KeepGroup  bool      `gorm:"-" json:"-"`
 	VersionID  *uint     `gorm:"index" json:"version_id"`
 	VersionIDs []uint    `gorm:"-" json:"version_ids"`
 	Title      string    `gorm:"size:512;not null" json:"title"`
@@ -128,6 +137,8 @@ type ProductLifecycleFilter struct {
 	VersionID                 uint
 	IncludeVersionDeployments bool
 	ReleaseUnitID             *uint
+	TaskGroupID               *uint
+	OpenTasksOnly             bool
 	Limit                     int
 	Offset                    int
 }

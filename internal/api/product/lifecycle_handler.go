@@ -22,6 +22,9 @@ type LifecycleRepository interface {
 	ProductVersionOptions(uint, uint) ([]model.ProductVersion, error)
 	SaveProductTask(uint, *model.ProductTask) error
 	DeleteProductTask(uint, uint, uint) error
+	ProductTaskGroups(uint, uint) ([]model.ProductTaskGroup, error)
+	SaveProductTaskGroup(uint, *model.ProductTaskGroup) error
+	DeleteProductTaskGroup(uint, uint, uint) error
 	SaveProductVersion(uint, *model.ProductVersion) error
 	SaveProductDistribution(uint, *model.ProductDistribution) error
 	SaveProductReleaseUnit(uint, *model.ProductReleaseUnit) error
@@ -75,7 +78,12 @@ func (h *Handler) LifecycleOptions(c *gin.Context) {
 	for _, row := range rows {
 		options = append(options, option{row.ID, row.Name, row.Status, row.ReleaseUnitID, row.ReleasedOn})
 	}
-	shared.Success(c, gin.H{"versions": options})
+	groups, err := h.repository.ProductTaskGroups(shared.UserID(c), id)
+	if err != nil {
+		respondError(c, err)
+		return
+	}
+	shared.Success(c, gin.H{"versions": options, "task_groups": groups})
 }
 
 func (h *Handler) ListLifecycle(c *gin.Context) {
@@ -110,7 +118,23 @@ func (h *Handler) ListLifecycle(c *gin.Context) {
 	var count int64
 	var err error
 	switch kind {
+	case "task-groups":
+		var groups []model.ProductTaskGroup
+		groups, err = h.repository.ProductTaskGroups(shared.UserID(c), id)
+		count = int64(len(groups))
+		start := min(offset, len(groups))
+		rows = groups[start:min(start+limit, len(groups))]
 	case "tasks":
+		if raw := c.Query("group_id"); raw != "" {
+			value, parseErr := strconv.ParseUint(raw, 10, strconv.IntSize)
+			if parseErr != nil {
+				shared.BadRequest(c, "待办分组 ID 无效")
+				return
+			}
+			groupID := uint(value)
+			f.TaskGroupID = &groupID
+		}
+		f.OpenTasksOnly = c.Query("open") == "true"
 		f.AssignableTasks = c.Query("assignable") == "true"
 		rows, count, err = h.repository.ListProductTasks(shared.UserID(c), id, f)
 	case "versions":
@@ -179,11 +203,33 @@ func (h *Handler) SaveLifecycle(c *gin.Context) {
 			err = h.repository.SaveProductReleaseUnit(shared.UserID(c), &input)
 		}
 		result = &input
-	case "tasks":
-		var input model.ProductTask
+	case "task-groups":
+		var input struct {
+			Name string `json:"name"`
+		}
 		if c.ShouldBindJSON(&input) != nil {
+			shared.BadRequest(c, "待办分组格式无效")
+			return
+		}
+		group := model.ProductTaskGroup{ID: id, ProductID: productID, Name: strings.TrimSpace(input.Name)}
+		if err = lifecycleText(group.Name, 64, true); err == nil {
+			validation = false
+			err = h.repository.SaveProductTaskGroup(shared.UserID(c), &group)
+		}
+		result = &group
+	case "tasks":
+		var payload struct {
+			model.ProductTask
+			GroupID *uint `json:"group_id"`
+		}
+		if c.ShouldBindJSON(&payload) != nil {
 			shared.BadRequest(c, "事项格式无效")
 			return
+		}
+		input := payload.ProductTask
+		input.KeepGroup = payload.GroupID == nil
+		if payload.GroupID != nil {
+			input.GroupID = *payload.GroupID
 		}
 		input.ID, input.ProductID, input.CreatedAt, input.UpdatedAt = id, productID, time.Time{}, time.Time{}
 		input.Title = strings.TrimSpace(input.Title)
@@ -307,6 +353,23 @@ func (h *Handler) SaveLifecycle(c *gin.Context) {
 		return
 	}
 	shared.Success(c, result)
+}
+
+func (h *Handler) DeleteTaskGroup(c *gin.Context) {
+	id, ok := lifecycleID(c)
+	if !ok {
+		return
+	}
+	groupID, err := shared.ParsePositiveID(c.Param("recordID"))
+	if err != nil {
+		shared.BadRequest(c, "待办分组 ID 无效")
+		return
+	}
+	if err := h.repository.DeleteProductTaskGroup(shared.UserID(c), id, groupID); err != nil {
+		respondError(c, err)
+		return
+	}
+	shared.Success(c, gin.H{"deleted": 1})
 }
 
 func (h *Handler) DeleteTask(c *gin.Context) {

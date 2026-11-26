@@ -3,47 +3,45 @@
     <PageBackLink v-if="!embedded" to="/applications/projects">返回项目与环境</PageBackLink>
     <div v-if="!embedded" class="page-header">
       <div><h1 class="page-title">{{ project ? `${project.name} 的环境` : '项目环境' }}</h1><p class="page-subtitle">环境定义部署目标与默认命名空间</p></div>
-      <button class="btn btn-primary" :disabled="!project" @click="openCreateEnvironment">+ 新建环境</button>
     </div>
 
     <div v-if="namespaceConflicts.length" class="k8s-banner k8s-banner-warn section-gap"><strong>命名空间迁移待处理</strong><span v-for="conflict in namespaceConflicts" :key="`${conflict.cluster_id}/${conflict.namespace}`">{{ clusterName(conflict.cluster_id) }} / {{ conflict.namespace }}：{{ conflict.environments.map(item => `项目 ${item.project_id} / ${item.name}`).join('、') }}</span></div>
     <SurfaceCard as="div" class="product-table-card" padding="none">
       <div class="product-toolbar">
-        <span class="cell-secondary">环境定义部署目标，部署成功后可在版本中关联记录。</span>
-        <router-link v-if="project?.transferred_environments?.length" class="btn product-primary" :to="{ path: '/applications', query: { project_id: props.projectID, environment_id: project.transferred_environments[0].id } }">查看应用</router-link>
-        <button class="btn" :class="{ 'product-primary': !project?.transferred_environments?.length }" :disabled="!project" @click="openProjectSettings">部署设置</button>
-        <button class="btn btn-primary" :disabled="!project" @click="openCreateEnvironment">新建环境</button>
+        <span class="cell-secondary" aria-live="polite">{{ listPage.total.value }} 个环境</span>
+        <div class="environment-toolbar-actions">
+          <router-link v-if="project?.transferred_environments?.length" class="btn" :to="{ path: '/applications', query: { project_id: props.projectID, environment_id: project.transferred_environments[0].id } }">查看迁入应用</router-link>
+          <button class="icon-button" title="部署设置" aria-label="部署设置" :disabled="!project" @click="openProjectSettings"><Settings :size="16" aria-hidden="true" /></button>
+          <button class="btn btn-primary" :disabled="!project" @click="openCreateEnvironment">新建环境</button>
+        </div>
       </div>
       <EmptyState v-if="projectEnvironmentResource.loading.value" variant="loading" message="正在读取环境..." />
       <EmptyState v-else-if="!showEnvironmentList" message="暂无部署环境，需要部署时再创建" />
-      <div v-else class="table-wrap">
+      <div v-else class="table-wrap environment-table">
         <DataTable>
           <thead>
             <tr>
               <th>环境</th>
-              <th>分类</th>
-              <th>集群</th>
-              <th>命名空间</th>
-              <th>状态</th>
+              <th>部署位置</th>
+              <th>命名空间状态</th>
               <th>关联应用</th>
               <TableActionCell header />
             </tr>
           </thead>
           <tbody>
             <tr v-for="environment in environments" :key="environment.id">
-              <td class="cell-primary">{{ environment.name }}</td>
-              <td><span class="badge badge-offline">{{ environmentKindLabel(environment.kind) }}</span></td>
-              <td>{{ clusterName(environment.cluster_id) }}</td>
-              <td>{{ environment.namespace }}</td>
               <td>
+                <div class="environment-name">
+                  <router-link class="environment-link" :aria-label="'查看 ' + environment.name + ' 的应用与部署'" :to="{ path: '/applications', query: { project_id: props.projectID, environment_id: environment.id } }">{{ environment.name }}</router-link>
+                  <span class="badge badge-offline">{{ environmentKindLabel(environment.kind) }}</span>
+                </div>
+              </td>
+              <td><span>{{ clusterName(environment.cluster_id) }}</span><span class="cell-secondary product-line environment-namespace">{{ environment.namespace }}</span></td>
+              <td>
+                <div class="environment-namespace-state">
                 <span class="badge" :class="namespaceStatusClass(environment.namespace_status)">
                   {{ environment.cluster_id ? namespaceStatusLabel(environment.namespace_status) : '待绑定' }}
                 </span>
-              </td>
-              <td>{{ environmentApplicationCount(environment.id) }}</td>
-              <TableActionCell>
-                <div class="btn-group">
-                  <router-link class="btn btn-sm" :to="{ path: '/applications', query: { project_id: props.projectID, environment_id: environment.id } }">应用与部署</router-link>
                   <button
                     v-if="environment.cluster_id && needsNamespaceSync(environment)"
                     class="icon-button"
@@ -51,16 +49,18 @@
                     aria-label="同步命名空间"
                     :disabled="syncingEnvironmentID === environment.id"
                     @click="syncNamespace(environment)"
-                  ><RefreshCw :size="16" :class="{ 'is-spinning': syncingEnvironmentID === environment.id }" /></button>
-                  <button class="btn btn-sm" title="编辑环境" @click="openEnvironmentEditor(environment)">编辑</button>
-                  <button class="btn btn-sm btn-danger" title="删除环境" @click="requestEnvironmentDelete(environment)">删除</button>
+                  ><RefreshCw :size="15" :class="{ 'is-spinning': syncingEnvironmentID === environment.id }" /></button>
                 </div>
+              </td>
+              <td>{{ environmentApplicationCount(environment.id) }}</td>
+              <TableActionCell>
+                <button class="icon-button" title="编辑环境" :aria-label="'编辑环境 ' + environment.name" @click="openEnvironmentEditor(environment)"><Pencil :size="15" aria-hidden="true" /></button>
               </TableActionCell>
             </tr>
           </tbody>
         </DataTable>
       </div>
-      <ResourcePagination :resource="listPage" label="项目环境分页" />
+      <ResourcePagination :resource="listPage" label="项目环境分页" :hide-single-page="environmentCountOnly" />
     </SurfaceCard>
 
     <SurfaceCard v-if="transferredApplications.length && !project?.transferred_environments?.length" padding="none" class="product-table-card section-gap">
@@ -85,7 +85,7 @@
       <div class="form-group"><label class="form-label">环境名称</label><input v-model.trim="environmentForm.name" class="form-input" required :pattern="editingEnvironment && environmentForm.name === editingEnvironment.name ? undefined : '[a-z0-9]([-a-z0-9]*[a-z0-9])?'" :maxlength="editingEnvironment && environmentForm.name === editingEnvironment.name ? undefined : Math.max(1, 54 - (project?.slug?.length || 0))" title="仅支持小写英文字母、数字和连字符" placeholder="production" :disabled="editingEnvironment && environmentHasApplications(editingEnvironment.id)" /></div>
       <div class="form-group"><label class="form-label">所属集群</label><SelectMenu v-model.number="environmentForm.cluster_id" class="form-select" :disabled="!!editingEnvironment?.cluster_id"><option :value="0" disabled>选择集群</option><option v-for="cluster in clusters" :key="cluster.id" :value="cluster.id">{{ cluster.name }}</option></SelectMenu></div>
       <div class="form-group"><label class="form-label">命名空间</label><input class="form-input" :value="namespacePreview" disabled /><p v-if="!project?.slug" class="form-hint">请先编辑项目，设置项目英文名。</p></div>
-      </form><template #actions><button type="button" class="btn" @click="closeEnvironmentModal">取消</button><button form="project-environment-form" type="submit" class="btn btn-primary" :disabled="submitting">{{ submitting ? '保存中...' : editingEnvironment ? '保存' : '创建环境' }}</button></template></BaseModal>
+      </form><template #actions><button v-if="editingEnvironment" type="button" class="btn btn-danger environment-delete" :disabled="submitting" @click="requestEnvironmentDelete(editingEnvironment)">删除环境</button><button type="button" class="btn" :disabled="submitting" @click="closeEnvironmentModal">取消</button><button form="project-environment-form" type="submit" class="btn btn-primary" :disabled="submitting">{{ submitting ? '保存中...' : editingEnvironment ? '保存' : '创建环境' }}</button></template></BaseModal>
 
     <BaseModal teleport :open="settingsOpen" title="项目部署设置" @close="settingsOpen = false">
       <form id="project-deployment-settings" @submit.prevent="saveProjectSettings">
@@ -108,8 +108,9 @@ import EmptyState from '../../components/EmptyState.vue'
 import { environmentKinds, environmentKindLabel } from '../products/environment-utils.js'
 import ResourcePagination from '../../components/ResourcePagination.vue'
 import { useListPage } from '../../composables/useListPage.js'
+import { PAGE_SIZE_OPTIONS } from '../../composables/usePagination.js'
 import { computed, ref, watch } from 'vue'
-import { RefreshCw } from 'lucide-vue-next'
+import { Pencil, RefreshCw, Settings } from 'lucide-vue-next'
 import PageBackLink from '../../components/PageBackLink.vue'
 import { getImageRegistries, updateProject, createProjectEnvironment, deleteProjectEnvironment, getProjectEnvironmentResources, syncProjectEnvironmentNamespace, updateProjectEnvironment } from '../../api/applications.js'
 import { getClusters } from '../../api/clusters.js'
@@ -146,6 +147,7 @@ function environmentHasApplications(environmentID) { return applications.value.s
 function clusterName(clusterID) { return clusters.value.find(cluster => cluster.id === Number(clusterID))?.name || (clusterID ? `集群 #${clusterID}` : '未绑定') }
 
 const listPage = useListPage(() => '/projects/' + encodeURIComponent(props.projectID) + '/environments', environments, readError)
+const environmentCountOnly = computed(() => listPage.pageSize.value === PAGE_SIZE_OPTIONS[0] && listPage.totalPages.value === 1)
 async function loadProject() {
   const requestedProjectID = props.projectID
   readError.value = ''
@@ -207,7 +209,7 @@ async function saveProjectSettings() {
   } catch (cause) { actionError.value = cause.message }
   finally { submitting.value = false }
 }
-function requestEnvironmentDelete(environment) { environmentDeleteTarget.value = environment }
+function requestEnvironmentDelete(environment) { closeEnvironmentModal(); environmentDeleteTarget.value = environment }
 async function deleteEnvironment() { if (!environmentDeleteTarget.value) return; submitting.value = true; actionError.value = ''; try { await deleteProjectEnvironment(props.projectID, environmentDeleteTarget.value.id); environmentDeleteTarget.value = null; await loadProject() } catch (e) { actionError.value = e.message || '删除环境失败' } finally { submitting.value = false } }
 async function syncNamespace(environment) { syncingEnvironmentID.value = environment.id; actionError.value = ''; try { const updated = await syncProjectEnvironmentNamespace(props.projectID, environment.id); const index = environments.value.findIndex(item => item.id === environment.id); if (index >= 0) environments.value[index] = updated } catch (e) { actionError.value = e.message || '同步命名空间失败' } finally { syncingEnvironmentID.value = null } }
 
@@ -217,6 +219,14 @@ watch(() => props.projectID, () => { listPage.reset(); environments.value = []; 
 
 <style scoped>
 .project-environments { min-width: 0; }
+.environment-toolbar-actions { display: flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: var(--space-8); margin-inline-start: auto; }
+.environment-name, .environment-namespace-state { display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-8); }
+.environment-link { font-weight: 650; text-decoration: none; }
+.environment-link:hover { text-decoration: underline; }
+.environment-link:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+.environment-namespace { overflow-wrap: anywhere; }
+.environment-table { padding-bottom: var(--space-12); }
+.environment-delete { margin-inline-end: auto; }
 .page-header { display:flex; align-items:flex-start; justify-content:space-between; gap:var(--space-16); }
 .page-subtitle { margin:var(--space-4) 0 0; color:var(--text-secondary); font-size:13px; }
 .confirm-copy { margin:0; color:var(--text-secondary); font-size:13px; }

@@ -1,5 +1,5 @@
 <template>
-  <BaseModal teleport :open="open" :title="`${form.id ? '编辑' : '新增'}${noun}`" size="large" :show-close="!busy" :close-on-overlay="!busy" :close-on-escape="!busy" @close="$emit('close')">
+  <BaseModal teleport :open="open" :title="`${form.id ? '编辑' : '新增'}${noun}`" :size="kind === 'versions' ? 'medium' : 'large'" :show-close="!busy" :close-on-overlay="!busy" :close-on-escape="!busy" @close="$emit('close')">
     <form :id="formID" @submit.prevent="submit">
       <fieldset :disabled="busy" class="lifecycle-fields product-form-grid">
         <template v-if="kind === 'tasks'">
@@ -30,16 +30,14 @@
           <label class="form-group"><span class="form-label">发行分类</span><SelectMenu v-model="form.audience" aria-label="发行分类"><option v-for="item in distributionAudiences" :key="item.id" :value="item.id">{{ item.label }}</option></SelectMenu></label>
         </template>
         <label v-if="kind !== 'versions'" class="form-group"><span class="form-label">状态</span><SelectMenu v-model="form.status" aria-label="记录状态"><option v-for="item in statuses" :key="item.id" :value="item.id">{{ item.label }}</option></SelectMenu></label>
+        <label v-if="kind === 'tasks' && taskGroups.length" class="form-group">
+          <span class="form-label">待办分组</span>
+          <SelectMenu v-model="form.group_id" aria-label="待办分组">
+            <option :value="0">未分组</option>
+            <option v-for="group in taskGroups" :key="group.id" :value="group.id">{{ group.name }}</option>
+          </SelectMenu>
+        </label>
         <label v-if="kind === 'tasks'" class="form-group"><span class="form-label">截止日期（可选）</span><input v-model="form.due_date" type="date" class="form-input" aria-label="计划日期" /></label>
-        <template v-if="kind === 'versions'">
-          <VersionTaskPicker
-            v-if="open"
-            v-model="form.task_ids"
-            :product-id="productId"
-            :version-id="form.id"
-            :disabled="busy"
-          />
-        </template>
         <label class="form-group product-full-width">
           <span class="form-label">{{ descriptionLabel }}</span>
           <textarea v-model="form[kind === 'tasks' ? 'details' : 'notes']" class="form-input" :aria-label="kind === 'versions' ? '版本说明' : '记录说明'" maxlength="8000" />
@@ -59,41 +57,57 @@
             </div>
           </div>
         </template>
-        <template v-if="kind === 'versions'">
-          <div class="product-full-width">
-            <div class="product-actions">
-              <button type="button" class="btn btn-sm" :aria-expanded="githubOpen" :aria-controls="githubPanelID" @click="githubOpen = !githubOpen">关联 GitHub 版本</button>
-              <span v-if="form.github_sources?.length" class="product-muted">已关联 {{ form.github_sources.length }} 个组件</span>
-            </div>
-            <div v-if="githubOpen && open" :id="githubPanelID" class="lifecycle-extra-panel">
-              <VersionGitHubPicker v-model="form.github_sources" :product-id="productId" :release-unit-id="form.release_unit_id" :disabled="busy" @error="$emit('error', $event)" />
+        <div v-if="kind === 'versions'" class="product-full-width version-associations">
+          <VersionTaskPicker
+            v-if="open"
+            v-model="form.task_ids"
+            :product-id="productId"
+            :version-id="form.id"
+            :disabled="busy"
+          />
+          <div class="version-association">
+            <button type="button" class="version-association-toggle" aria-label="关联 GitHub 版本" :aria-expanded="githubOpen" :aria-controls="githubPanelID" @click="githubOpen = !githubOpen">
+              <span>关联 GitHub 版本</span>
+              <span v-if="form.github_sources?.length" class="cell-secondary">已关联 {{ form.github_sources.length }} 个组件</span>
+              <ChevronDown :size="15" aria-hidden="true" />
+            </button>
+            <div v-show="githubOpen" :id="githubPanelID" class="version-association-body">
+              <VersionGitHubPicker v-if="githubOpen && open" v-model="form.github_sources" :product-id="productId" :release-unit-id="form.release_unit_id" :disabled="busy" @error="$emit('error', $event)" />
             </div>
           </div>
-          <div class="product-full-width">
-            <div class="product-actions">
-              <button type="button" class="btn btn-sm" :aria-expanded="deploymentsOpen" :aria-controls="deploymentPanelID" @click="deploymentsOpen = !deploymentsOpen">关联部署记录</button>
-              <span v-if="deploymentCount(form)" class="product-muted">已选择 {{ deploymentCount(form) }} 条</span>
-              <button v-if="deploymentsOpen && deploymentCount(form)" type="button" class="btn btn-sm" @click="form.deployment_ids = []; form.platform_release_ids = []">清空选择</button>
-            </div>
-            <div v-show="deploymentsOpen" :id="deploymentPanelID" class="lifecycle-extra-panel">
+          <div class="version-association">
+            <button type="button" class="version-association-toggle" aria-label="关联部署记录" :aria-expanded="deploymentsOpen" :aria-controls="deploymentPanelID" @click="deploymentsOpen = !deploymentsOpen">
+              <span>关联部署记录</span>
+              <span v-if="deploymentCount(form)" class="cell-secondary">已选择 {{ deploymentCount(form) }} 条</span>
+              <ChevronDown :size="15" aria-hidden="true" />
+            </button>
+            <div v-show="deploymentsOpen" :id="deploymentPanelID" class="version-association-body">
               <template v-if="deploymentsOpen">
-                <input ref="deploymentSearch" v-model.trim="deploymentKeyword" class="form-input" aria-label="搜索部署记录" placeholder="搜索组件或版本" />
+                <div class="version-deployment-tools">
+                  <input ref="deploymentSearch" v-model.trim="deploymentKeyword" class="form-input" aria-label="搜索部署记录" placeholder="搜索组件或版本" />
+                  <button v-if="deploymentCount(form)" type="button" class="btn" @click="form.deployment_ids = []; form.platform_release_ids = []">清空选择</button>
+                </div>
                 <EmptyState v-if="deployments.loading.value" variant="loading" message="正在读取部署记录..." />
                 <EmptyState v-else-if="deployments.error.value" message="部署记录读取失败"><template #action><button type="button" class="btn btn-sm" @click="loadDeployments">重试</button></template></EmptyState>
                 <div v-else class="product-checklist"><label v-for="deployment in deployments.items.value" :key="`${deployment.source || 'application'}-${deployment.id}`"><input type="checkbox" :value="deployment.id" :checked="deploymentSelected(deployment)" @change="setDeploymentSelected(deployment, $event.target.checked)" />{{ deployment.application_name }} · {{ deployment.environment_name || '未命名环境' }}（{{ environmentKindLabel(deployment.environment_kind) }}） · {{ deployment.version || `#${deployment.id}` }} · {{ deployment.status }}</label><span v-if="!deployments.total.value" class="product-muted">暂无可关联的部署记录</span></div>
-                <ResourcePagination v-if="deployments.total.value" :resource="deployments" label="可关联部署分页" :show-error="false" />
+                <ResourcePagination v-if="deployments.total.value" :resource="deployments" label="可关联部署分页" :show-error="false" hide-single-page />
               </template>
             </div>
           </div>
-        </template>
+        </div>
       </fieldset>
     </form>
-    <template #actions><button class="btn" :disabled="busy" @click="$emit('close')">取消</button><button class="btn btn-primary" :disabled="busy" type="submit" :form="formID">{{ busy ? '保存中...' : `保存${noun}` }}</button></template>
+    <template #actions>
+      <button v-if="kind === 'tasks' && form.id" type="button" class="btn btn-danger task-editor-remove" :disabled="busy" @click="emit('remove', record)">删除事项</button>
+      <button class="btn" :disabled="busy" @click="$emit('close')">取消</button>
+      <button class="btn btn-primary" :disabled="busy" type="submit" :form="formID">{{ busy ? '保存中...' : `保存${noun}` }}</button>
+    </template>
   </BaseModal>
 </template>
 <script setup>
 import { distributionAudiences, environmentKindLabel } from './environment-utils.js'
 import { computed, nextTick, ref, useId, watch } from 'vue'
+import { ChevronDown } from 'lucide-vue-next'
 import BaseModal from '../../components/BaseModal.vue'
 import EmptyState from '../../components/EmptyState.vue'
 import SelectMenu from '../../components/SelectMenu.vue'
@@ -104,8 +118,9 @@ import { usePaginatedResource } from '../../composables/usePaginatedResource.js'
 import { getLifecyclePage } from '../../api/product-lifecycle.js'
 import { labelFor, localDate, platforms } from './product-utils.js'
 import { taskKinds, taskStatuses, priorities, distributionStatuses, deploymentCount, versionLabel } from './lifecycle-utils.js'
-const props = defineProps({ open: Boolean, busy: Boolean, expandDeployments: Boolean, kind: { type: String, required: true }, productId: { type: Number, required: true }, record: { type: Object, default: null }, versions: { type: Array, default: () => [] }, channels: { type: Array, default: () => [] }, releaseUnits: { type: Array, default: () => [] } })
-const emit = defineEmits(['close', 'save', 'error'])
+const props = defineProps({ open: Boolean, busy: Boolean, expandDeployments: Boolean, kind: { type: String, required: true }, productId: { type: Number, required: true }, record: { type: Object, default: null }, versions: { type: Array, default: () => [] }, channels: { type: Array, default: () => [] }, releaseUnits: { type: Array, default: () => [] }, groups: { type: Array, default: () => [] } })
+const taskGroups = computed(() => props.groups || [])
+const emit = defineEmits(['close', 'save', 'remove', 'error'])
 const formID = `lifecycle-${useId()}`
 const deploymentPanelID = `${formID}-deployments`
 const githubPanelID = `${formID}-github`
@@ -156,7 +171,10 @@ watch(() => props.open, open => {
   }[props.kind]
   form.value = { ...defaults, ...JSON.parse(JSON.stringify(props.record || {})) }
   if (props.kind !== 'versions') form.value.version_id ??= ''
-  if (props.kind === 'tasks') form.value.version_ids ??= form.value.version_id ? [form.value.version_id] : []
+  if (props.kind === 'tasks') {
+    form.value.version_ids ??= form.value.version_id ? [form.value.version_id] : []
+    if (taskGroups.value.length) form.value.group_id ??= 0
+  }
   if (props.kind === 'distributions') {
     channelFieldsOpen.value = Boolean(form.value.build_identifier || (form.value.platform_version && form.value.platform_version !== selectedVersionName.value))
   }
@@ -190,4 +208,21 @@ function submit() {
 <style scoped>
 .lifecycle-fields { border: 0; padding: 0; margin: 0; min-width: 0; }
 .lifecycle-extra-panel { margin-top: var(--space-12); }
+.version-associations { display: grid; }
+.version-associations > .form-group { margin-bottom: var(--space-12); }
+.version-association { min-width: 0; border-top: 1px solid var(--border-muted); }
+.version-association:last-child { border-bottom: 1px solid var(--border-muted); }
+.version-association-toggle { display: flex; align-items: center; gap: var(--space-8); width: 100%; min-height: var(--button-height); padding: var(--space-8) 0; border: 0; background: transparent; color: var(--text-primary); font: inherit; font-size: var(--button-font-size); font-weight: 650; text-align: start; cursor: pointer; }
+.version-association-toggle:hover:not(:disabled) { color: var(--action-primary-hover); }
+.version-association-toggle:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px; border-radius: var(--radius-control); }
+.version-association-toggle:disabled { cursor: default; }
+.version-association-toggle > .cell-secondary { margin-inline-start: auto; font-weight: 400; }
+.version-association-toggle > svg { flex: none; margin-inline-start: auto; color: var(--text-secondary); }
+.version-association-toggle > .cell-secondary + svg { margin-inline-start: 0; }
+.version-association-toggle[aria-expanded="true"] > svg { transform: rotate(180deg); }
+.version-association-body { padding: var(--space-4) 0 var(--space-12); }
+.version-association-body :deep(.empty-state) { min-height: 72px; }
+.version-deployment-tools { display: flex; align-items: center; gap: var(--space-8); }
+.version-deployment-tools > input { min-width: 0; }
+.task-editor-remove { margin-right: auto; }
 </style>

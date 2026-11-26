@@ -44,7 +44,11 @@ func productDeletionFixture(t *testing.T, s *Store) (model.Product, []interface{
 	if err := s.SaveProductVersion(1, &v); err != nil {
 		t.Fatal(err)
 	}
-	task := model.ProductTask{ProductID: p.ID, VersionID: &v.ID, Title: "verify", Kind: "action", Status: "todo", Priority: "normal"}
+	group := model.ProductTaskGroup{ProductID: p.ID, Name: "release checks"}
+	if err := s.SaveProductTaskGroup(1, &group); err != nil {
+		t.Fatal(err)
+	}
+	task := model.ProductTask{ProductID: p.ID, GroupID: group.ID, VersionID: &v.ID, Title: "verify", Kind: "action", Status: "todo", Priority: "normal"}
 	if err := s.SaveProductTask(1, &task); err != nil {
 		t.Fatal(err)
 	}
@@ -89,7 +93,7 @@ func TestProductDeletionCleansOwnedDataAndPreservesResources(t *testing.T) {
 					t.Fatalf("unrelated product deleted: %v", err)
 				}
 			}
-			for _, record := range []interface{}{&model.ProductTask{}, &model.ProductVersion{}, &model.ProductDistribution{}, &model.ProductDistributionEvent{}, &model.ProductVersionDeployment{}, &model.ProductVersionPlatformRelease{}, &model.ProductProject{}, &model.ProductApplication{}} {
+			for _, record := range []interface{}{&model.ProductTask{}, &model.ProductTaskGroup{}, &model.ProductVersion{}, &model.ProductDistribution{}, &model.ProductDistributionEvent{}, &model.ProductVersionDeployment{}, &model.ProductVersionPlatformRelease{}, &model.ProductProject{}, &model.ProductApplication{}} {
 				var count int64
 				query := s.DB().Model(record)
 				if _, ok := record.(*model.ProductProject); ok {

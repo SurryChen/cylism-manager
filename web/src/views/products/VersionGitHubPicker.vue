@@ -1,15 +1,18 @@
 <template>
   <EmptyState v-if="loading" variant="loading" message="正在读取仓库绑定" />
-  <EmptyState v-else-if="!rows.length" message="请先在版本页的「GitHub 仓库」中为该发布端绑定仓库" />
+  <EmptyState v-else-if="!rows.length" :message="releaseUnitId === '' ? '请先选择发布端' : '可在「版本设置 → GitHub 仓库」绑定仓库'" />
   <div v-else class="github-versions">
-    <div v-for="row in rows" :key="row.id" class="github-version-row">
-      <div>
+    <div v-for="row in rows" :key="row.id" class="github-version-row" role="group" :aria-label="row.component">
+      <div class="github-version-component">
         <strong>{{ row.component }}</strong>
         <div class="cell-secondary">{{ row.repository }}</div>
       </div>
-      <div v-if="row.source" class="github-version-revision">
-        <span v-if="row.source.tag">{{ row.source.tag }}</span>
-        <code class="cell-secondary" :title="row.source.sha">{{ row.source.sha.slice(0, 12) }}</code>
+      <div v-if="row.source" class="github-version-selection">
+        <div>
+          <div v-if="row.source.tag">{{ row.source.tag }}</div>
+          <code class="cell-secondary" :title="row.source.sha">{{ row.source.sha.slice(0, 12) }}</code>
+        </div>
+        <button type="button" class="icon-button" :aria-label="'移除 ' + row.component + ' 的版本来源'" title="移除版本来源" :disabled="disabled" @click="removeRevision(row.id)"><X :size="15" aria-hidden="true" /></button>
       </div>
       <div v-else-if="row.bound" class="github-version-revision">
         <SelectMenu v-model="revisionKinds[row.id]" :aria-label="row.component + ' 来源类型'" :disabled="disabled">
@@ -18,7 +21,6 @@
         </SelectMenu>
         <GitHubRevisionMenu :key="row.id + ':' + (revisionKinds[row.id] || 'tags')" :product-id="productId" :binding-id="row.id" :kind="revisionKinds[row.id] || 'tags'" :disabled="disabled" @select="selectRevision(row, $event)" @error="$emit('error', $event)" />
       </div>
-      <button v-if="row.source" type="button" class="icon-button" :aria-label="'移除 ' + row.component + ' 的版本来源'" title="移除版本来源" :disabled="disabled" @click="removeRevision(row.id)"><X :size="15" /></button>
     </div>
   </div>
 </template>
@@ -79,8 +81,13 @@ function removeRevision(id) {
 </script>
 
 <style scoped>
-.github-versions { display: grid; gap: var(--space-8); }
-.github-version-row { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-8); }
-.github-version-row > div:first-child { flex: 1; min-width: 120px; overflow-wrap: anywhere; }
-.github-version-revision { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-8); }
+.github-version-row { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 3fr); align-items: center; gap: var(--space-12); padding: var(--space-8) 0; }
+.github-version-row + .github-version-row { border-top: 1px solid var(--border-muted); }
+.github-version-component, .github-version-selection { overflow-wrap: anywhere; font-size: var(--button-font-size); }
+.github-version-revision, .github-version-selection { display: grid; align-items: center; gap: var(--space-8); }
+.github-version-revision { grid-template-columns: 84px minmax(0, 1fr); }
+.github-version-selection { grid-template-columns: minmax(0, 1fr) auto; }
+@media (max-width: 500px) {
+  .github-version-row { grid-template-columns: minmax(0, 1fr); gap: var(--space-8); }
+}
 </style>

@@ -24,14 +24,23 @@
           <button class="btn btn-sm product-section-gap" type="button" :disabled="form.links.length >= 30" @click="form.links.push({ kind: 'repository', label: '', url: '' })">添加资料链接</button>
         </template>
         <template v-else-if="tab === 'channels'">
-          <p class="product-muted">维护平台标识和访问链接。版本、Build 和审核进度统一在发行记录中更新；暂停渠道会保留历史。</p>
-          <EmptyState v-if="!form.channels.length" message="还没有发行渠道" />
-          <div v-for="(channel, index) in form.channels" :key="index" class="product-editor-row">
-            <div class="product-actions"><strong>渠道 {{ index + 1 }}</strong><button class="icon-button" type="button" title="移除发行渠道" aria-label="移除发行渠道" @click="form.channels.splice(index, 1)"><Trash2 :size="15" /></button></div>
+          <p class="product-muted channel-intro">添加一次，发行时直接选择。版本和审核进度随发行记录更新。</p>
+          <EmptyState v-if="!form.channels.length" message="暂无发行渠道" />
+          <div v-for="(channel, index) in form.channels" :key="channel" class="product-editor-row channel-editor-row">
+            <div class="product-actions channel-heading">
+              <div class="channel-heading-label">
+                <strong>{{ channel.name || labelFor(platforms, channel.platform) }}</strong>
+                <span v-if="channel.id" class="badge" :class="channelClass(channel.publish_status)">{{ labelFor(channelStatuses, channel.publish_status) }}</span>
+                <span v-if="channel.online_version" class="cell-secondary">线上 {{ channel.online_version }}</span>
+                <span v-if="channel.pending_version" class="cell-secondary">待发布 {{ channel.pending_version }}</span>
+              </div>
+              <button class="icon-button" type="button" title="移除发行渠道" aria-label="移除发行渠道" @click="form.channels.splice(index, 1)"><Trash2 :size="15" /></button>
+            </div>
             <div class="product-form-grid">
               <label class="form-group"><span class="form-label">平台</span><SelectMenu v-model="channel.platform" aria-label="发行平台"><option v-for="item in platforms" :key="item.id" :value="item.id">{{ item.label }}</option></SelectMenu></label>
-              <label class="form-group"><span class="form-label">渠道名称</span><input v-model="channel.name" class="form-input" maxlength="128" placeholder="例如：微信正式版" /></label>
-              <label v-if="product?.release_units?.length" class="form-group">
+              <label class="form-group"><span class="form-label">渠道名称（可选）</span><input v-model.trim="channel.name" class="form-input" aria-label="渠道名称" maxlength="128" :placeholder="labelFor(platforms, channel.platform)" /></label>
+              <label class="form-group product-full-width"><span class="form-label">访问或商店链接（可选）</span><input v-model.trim="channel.public_url" class="form-input" aria-label="访问或商店链接" type="url" placeholder="https://" /></label>
+              <label v-if="product?.release_units?.length" class="form-group product-full-width">
                 <span class="form-label">发布端</span>
                 <SelectMenu :model-value="channel.release_unit_id ?? ''" aria-label="渠道发布端" @update:model-value="channel.release_unit_id = $event === '' ? null : Number($event)">
                   <option value="">不限发布端</option>
@@ -39,14 +48,19 @@
                   <option v-for="unit in product.release_units" :key="unit.id" :value="unit.id">{{ unit.name }}</option>
                 </SelectMenu>
               </label>
-              <label class="form-group"><span class="form-label">平台应用标识</span><input v-model="channel.app_identifier" class="form-input" maxlength="256" placeholder="App ID / 包名 / Bundle ID" /></label>
-              <label class="product-full-width product-muted"><input type="checkbox" :checked="channel.publish_status === 'paused'" aria-label="暂停发行" @change="setChannelPaused(channel, $event.target.checked)" /> 暂停发行</label>
-              <label class="form-group product-full-width"><span class="form-label">管理后台链接</span><input v-model.trim="channel.admin_url" class="form-input" type="url" placeholder="https://" /></label>
-              <label class="form-group product-full-width"><span class="form-label">公开访问或商店链接</span><input v-model.trim="channel.public_url" class="form-input" type="url" placeholder="https://" /></label>
-              <label class="form-group product-full-width"><span class="form-label">备注</span><textarea v-model="channel.notes" class="form-input" maxlength="1024" /></label>
             </div>
+            <details class="channel-options">
+              <summary>更多设置<ChevronDown :size="14" aria-hidden="true" /></summary>
+              <div class="product-form-grid">
+                <label class="form-group"><span class="form-label">平台应用标识（可选）</span><input v-model.trim="channel.app_identifier" class="form-input" aria-label="平台应用标识" maxlength="256" placeholder="App ID / 包名 / Bundle ID" /></label>
+                <label class="form-group"><span class="form-label">管理后台链接（可选）</span><input v-model.trim="channel.admin_url" class="form-input" aria-label="管理后台链接" type="url" placeholder="https://" @invalid="$event.target.closest('details').open = true" /></label>
+                <label class="form-group product-full-width"><span class="form-label">备注（可选）</span><textarea v-model="channel.notes" class="form-input" aria-label="渠道备注" maxlength="1024" rows="2" /></label>
+                <label class="product-full-width product-muted"><input type="checkbox" :checked="channel.publish_status === 'paused'" aria-label="暂停发行" @change="setChannelPaused(channel, $event.target.checked)" /> 暂停发行</label>
+              </div>
+            </details>
           </div>
-          <button class="btn btn-sm product-section-gap" type="button" :disabled="form.channels.length >= 30" @click="form.channels.push({ platform: 'web', name: '', publish_status: 'draft', app_identifier: '', admin_url: '', public_url: '', online_version: '', pending_version: '', notes: '' })">添加发行渠道</button>
+          <button class="btn btn-sm product-section-gap" type="button" :disabled="form.channels.length >= 30" @click="addChannel"><Plus :size="15" aria-hidden="true" />添加渠道</button>
+          <p v-if="product?.channels?.length" class="product-muted channel-footnote">有发行记录的渠道可在「更多设置」中暂停，历史记录会保留。</p>
         </template>
         <template v-else-if="tab === 'resources'">
           <p class="product-muted">可不关联运维资源。项目中的环境和应用入口沿用已有资料，修改关联不会改变部署。</p>
@@ -73,12 +87,12 @@
 
 <script setup>
 import { computed, ref, useId, watch } from 'vue'
-import { Trash2 } from 'lucide-vue-next'
+import { ChevronDown, Plus, Trash2 } from 'lucide-vue-next'
 import BaseModal from '../../components/BaseModal.vue'
 import EmptyState from '../../components/EmptyState.vue'
 import SectionTabsHeader from '../../components/SectionTabsHeader.vue'
 import SelectMenu from '../../components/SelectMenu.vue'
-import { editableProduct, stages, platforms, linkKinds } from './product-utils.js'
+import { editableProduct, stages, platforms, channelStatuses, channelClass, labelFor, linkKinds } from './product-utils.js'
 
 const props = defineProps({ projectMode: Boolean, open: Boolean, busy: Boolean, initialTab: { type: String, default: 'basics' }, product: { type: Object, default: null }, options: { type: Object, default: () => ({ projects: [], applications: [] }) } })
 defineEmits(['close', 'save'])
@@ -87,7 +101,16 @@ const form = ref(editableProduct())
 const tab = ref('basics')
 const tabs = [{ id: 'basics', label: '基本信息', title: '编辑基本信息' }, { id: 'links', label: '资料链接', title: '管理资料链接' }, { id: 'channels', label: '发行渠道', title: '管理发行渠道' }, { id: 'resources', label: '资源关联', title: '管理资源关联' }]
 const section = computed(() => tabs.find(item => item.id === tab.value))
-watch(() => props.open, open => { if (open) { form.value = editableProduct(props.product || {}); tab.value = tabs.some(item => item.id === props.initialTab) ? props.initialTab : 'basics' } }, { immediate: true })
+watch(() => props.open, open => {
+  if (!open) return
+  form.value = editableProduct(props.product || {})
+  tab.value = tabs.some(item => item.id === props.initialTab) ? props.initialTab : 'basics'
+  if (tab.value === 'channels' && !form.value.channels.length) addChannel()
+}, { immediate: true })
+function addChannel() {
+  if (form.value.channels.length >= 30) return
+  form.value.channels.push({ platform: 'web', name: '', publish_status: 'draft', app_identifier: '', admin_url: '', public_url: '', online_version: '', pending_version: '', notes: '' })
+}
 function setChannelPaused(channel, paused) {
   const original = props.product?.channels?.find(item => item.id === channel.id)?.publish_status
   channel.publish_status = paused ? 'paused' : original && original !== 'paused' ? original : 'draft'
@@ -97,4 +120,15 @@ function projectName(id) { return props.options.projects.find(item => item.id ==
 
 <style scoped>
 .product-editor-fields { min-width: 0; padding: 0; border: 0; margin: 0; }
+.channel-intro { margin: 0 0 var(--space-16); }
+.channel-heading-label { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-8); min-width: 0; }
+.channel-heading-label strong { overflow-wrap: anywhere; font-size: 13px; }
+.channel-heading > .icon-button { flex-shrink: 0; }
+.channel-options { margin-top: var(--space-16); }
+.channel-options summary { display: flex; align-items: center; gap: var(--space-4); width: fit-content; color: var(--text-secondary); cursor: pointer; font-size: 12px; list-style: none; }
+.channel-options summary::-webkit-details-marker { display: none; }
+.channel-options[open] summary { margin-bottom: var(--space-16); }
+.channel-options[open] summary svg { transform: rotate(180deg); }
+.channel-options textarea { min-height: 64px; }
+.channel-footnote { margin: var(--space-12) 0 0; font-size: 12px; }
 </style>

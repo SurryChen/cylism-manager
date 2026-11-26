@@ -36,6 +36,7 @@ func TestProductLifecycleAPIContracts(t *testing.T) {
 	r.POST("/products/:id/lifecycle/:kind", h.SaveLifecycle)
 	r.PUT("/products/:id/lifecycle/:kind/:recordID", h.SaveLifecycle)
 	r.DELETE("/products/:id/lifecycle/tasks/:recordID", h.DeleteTask)
+	r.DELETE("/products/:id/lifecycle/task-groups/:recordID", h.DeleteTaskGroup)
 	r.GET("/products/:id/distributions/:recordID/events", h.DistributionEvents)
 	request := func(method, path, body, user string) *httptest.ResponseRecorder {
 		t.Helper()
@@ -46,7 +47,113 @@ func TestProductLifecycleAPIContracts(t *testing.T) {
 		r.ServeHTTP(res, req)
 		return res
 	}
-	for _, kind := range []string{"tasks", "versions", "distributions", "deployments"} {
+	t.Run("groups preserve tasks and legacy updates", func(t *testing.T) {
+		product := model.Product{OwnerID: 1, Name: "board"}
+		if err := s.SaveProduct(&product, nil, nil); err != nil {
+			t.Fatal(err)
+		}
+		base := fmt.Sprintf("/products/%d/lifecycle/", product.ID)
+		decode := func(res *httptest.ResponseRecorder, data any) {
+			t.Helper()
+			if res.Code != 200 || json.Unmarshal(res.Body.Bytes(), data) != nil {
+				t.Fatalf("request failed: %d %s", res.Code, res.Body)
+			}
+		}
+		var group struct{ Data model.ProductTaskGroup }
+		decode(request("POST", base+"task-groups", `{"name":"  发布验证  "}`, "owner"), &group)
+		if group.Data.ID == 0 {
+			t.Fatal("group ID missing")
+		}
+		if group.Data.Name != "发布验证" {
+			t.Fatalf("group name was not trimmed: %q", group.Data.Name)
+		}
+		for _, user := range []string{"", "other"} {
+			expected := 404
+			if user == "" {
+				expected = 401
+			}
+			for _, method := range []string{"GET", "POST"} {
+				if res := request(method, base+"task-groups", `{"name":"unauthorized"}`, user); res.Code != expected {
+					t.Fatalf("group access %s %q: %d %s", method, user, res.Code, res.Body)
+				}
+			}
+		}
+		if res := request("POST", base+"task-groups", `{"name":"发布验证"}`, "owner"); res.Code != 409 {
+			t.Fatalf("duplicate group: %d %s", res.Code, res.Body)
+		}
+		optionsURL := fmt.Sprintf("/products/%d/lifecycle-options", product.ID)
+		if res := request("GET", optionsURL, "", "owner"); res.Code != 200 || !strings.Contains(res.Body.String(), `"task_groups":[{`) {
+			t.Fatalf("group options: %d %s", res.Code, res.Body)
+		}
+		var task struct{ Data model.ProductTask }
+		fields := `"title":"验证","kind":"action","status":"todo","priority":"normal"`
+		body := fmt.Sprintf(`{%s,"group_id":%d}`, fields, group.Data.ID)
+		decode(request("POST", base+"tasks", body, "owner"), &task)
+		if task.Data.GroupID != group.Data.ID {
+			t.Fatalf("assigned task: %+v", task.Data)
+		}
+		foreignBase := fmt.Sprintf("/products/%d/lifecycle/", p.ID)
+		if res := request("POST", foreignBase+"tasks", body, "owner"); res.Code != 403 {
+			t.Fatalf("cross-product assignment: %d %s", res.Code, res.Body)
+		}
+		taskURL := fmt.Sprintf("%stasks/%d", base, task.Data.ID)
+		update := fmt.Sprintf(`{%s,"revision":%d}`, fields, task.Data.Revision)
+		decode(request("PUT", taskURL, update, "owner"), &task)
+		if task.Data.GroupID != group.Data.ID {
+			t.Fatalf("legacy request cleared the group: %+v", task.Data)
+		}
+		readTasks := func(query string) []model.ProductTask {
+			t.Helper()
+			var list struct {
+				Data struct{ Items []model.ProductTask }
+			}
+			decode(request("GET", base+"tasks?"+query, "", "owner"), &list)
+			return list.Data.Items
+		}
+		groupFilter := fmt.Sprintf("group_id=%d", group.Data.ID)
+		if open, done := readTasks(groupFilter+"&open=true"), readTasks(groupFilter+"&status=done"); len(open) != 1 || len(done) != 0 {
+			t.Fatalf("unexpected board rows: open=%v, done=%v", open, done)
+		}
+		groupURL := fmt.Sprintf("%stask-groups/%d", base, group.Data.ID)
+		decode(request("PUT", groupURL, `{"name":"上线验收","product_id":999}`, "owner"), &group)
+		if group.Data.ProductID != product.ID || group.Data.Name != "上线验收" {
+			t.Fatalf("group rename or ownership failed: %+v", group.Data)
+		}
+		if rows := readTasks(groupFilter); len(rows) != 1 || rows[0].GroupID != group.Data.ID {
+			t.Fatalf("rename changed task grouping: %+v", rows)
+		}
+		var second struct{ Data model.ProductTaskGroup }
+		decode(request("POST", base+"task-groups", `{"name":"研发"}`, "owner"), &second)
+		var groupPage struct {
+			Data struct {
+				Items []model.ProductTaskGroup
+				Total int64
+			}
+		}
+		decode(request("GET", base+"task-groups?limit=1&offset=1", "", "owner"), &groupPage)
+		if groupPage.Data.Total != 2 || len(groupPage.Data.Items) != 1 || groupPage.Data.Items[0].ID != second.Data.ID {
+			t.Fatalf("group page: %+v", groupPage)
+		}
+		if res := request("PUT", groupURL, `{"name":"研发"}`, "owner"); res.Code != 409 {
+			t.Fatalf("duplicate rename: %d %s", res.Code, res.Body)
+		}
+		if res := request("PUT", groupURL, `{"name":"unauthorized"}`, "other"); res.Code != 404 {
+			t.Fatalf("foreign group rename: %d %s", res.Code, res.Body)
+		}
+		if res := request("GET", base+"tasks?group_id=-1", "", "owner"); res.Code != 400 {
+			t.Fatalf("invalid group filter: %d %s", res.Code, res.Body)
+		}
+		if res := request("DELETE", groupURL, "", "other"); res.Code != 404 {
+			t.Fatalf("foreign group delete: %d %s", res.Code, res.Body)
+		}
+		if res := request("DELETE", groupURL, "", "owner"); res.Code != 200 {
+			t.Fatalf("group delete: %d %s", res.Code, res.Body)
+		}
+		if rows := readTasks("group_id=0"); len(rows) != 1 || rows[0].ID != task.Data.ID || rows[0].Revision != task.Data.Revision+1 {
+			t.Fatalf("ungrouped tasks: %+v", rows)
+		}
+	})
+	for _, kind := range []string{"tasks", "versions", "distributions", "deployments", "task-groups"} {
 		path := fmt.Sprintf("/products/%d/lifecycle/%s", p.ID, kind)
 		if res := request("GET", path, "", ""); res.Code != 401 {
 			t.Fatalf("authentication %s: %d", kind, res.Code)
@@ -59,6 +166,7 @@ func TestProductLifecycleAPIContracts(t *testing.T) {
 		}
 	}
 	for _, test := range []struct{ kind, body string }{
+		{"task-groups", "{}"}, {"task-groups", `{"name":"   "}`}, {"task-groups", fmt.Sprintf(`{"name":%q}`, strings.Repeat("组", 65))},
 		{"tasks", "{}"}, {"tasks", "{\"title\":\"test\",\"kind\":\"action\",\"status\":\"todo\",\"priority\":\"normal\",\"due_date\":\"2026-02-30\"}"},
 		{"versions", "{\"name\":\"1\",\"status\":\"planning\",\"build_url\":\"javascript:alert(1)\"}"},
 		{"versions", "{\"name\":\"1\",\"status\":\"planning\",\"artifact_url\":\"https://user:password@example.com/a\"}"},

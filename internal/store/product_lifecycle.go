@@ -33,6 +33,12 @@ func (s *Store) ListProductTasks(ownerID, productID uint, f model.ProductLifecyc
 	versionID := f.VersionID
 	f.VersionID = 0
 	q := lifecycleQuery(s.db, &model.ProductTask{}, productID, f)
+	if f.TaskGroupID != nil {
+		q = q.Where("group_id = ?", *f.TaskGroupID)
+	}
+	if f.OpenTasksOnly {
+		q = q.Where("status IN ?", []string{"todo", "in_progress", "blocked"})
+	}
 	if versionID != 0 && !f.AssignableTasks {
 		q = q.Where("id IN (?)", s.db.Model(&model.ProductVersionTask{}).Select("task_id").Where("version_id = ?", versionID))
 	}
@@ -172,11 +178,17 @@ func (s *Store) SaveProductTask(ownerID uint, task *model.ProductTask) error {
 			if current.Revision != task.Revision {
 				return model.ErrProductLifecycleConflict
 			}
+			if task.KeepGroup {
+				task.GroupID = current.GroupID
+			}
 			var err error
 			previous, err = taskVersionIDs(tx, task.ID)
 			if err != nil {
 				return err
 			}
+		}
+		if err := productTaskGroupAccess(tx, task.ProductID, task.GroupID); err != nil {
+			return err
 		}
 		ids := task.VersionIDs
 		if ids == nil {
