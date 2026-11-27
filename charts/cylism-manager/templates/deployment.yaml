@@ -91,30 +91,6 @@ spec:
                   name: {{ include "cylism-manager.configMapName" . }}
                   key: public-url
                   optional: true
-            - name: WECHAT_COMPONENT_APP_ID
-              valueFrom:
-                secretKeyRef:
-                  name: {{ include "cylism-manager.secretName" . }}
-                  key: wechat-component-app-id
-                  optional: true
-            - name: WECHAT_COMPONENT_APP_SECRET
-              valueFrom:
-                secretKeyRef:
-                  name: {{ include "cylism-manager.secretName" . }}
-                  key: wechat-component-app-secret
-                  optional: true
-            - name: WECHAT_EVENT_TOKEN
-              valueFrom:
-                secretKeyRef:
-                  name: {{ include "cylism-manager.secretName" . }}
-                  key: wechat-event-token
-                  optional: true
-            - name: WECHAT_ENCODING_AES_KEY
-              valueFrom:
-                secretKeyRef:
-                  name: {{ include "cylism-manager.secretName" . }}
-                  key: wechat-encoding-aes-key
-                  optional: true
             - name: DATABASE_PATH
               value: /data/cylism.db
             - name: ACCESS_TOKEN_TTL

@@ -475,10 +475,6 @@ func saveProductVersionTasks(tx *gorm.DB, version *model.ProductVersion) error {
 }
 
 func (s *Store) SaveProductDistribution(ownerID uint, record *model.ProductDistribution) error {
-	return s.saveProductDistribution(ownerID, ownerID, record)
-}
-
-func (s *Store) saveProductDistribution(ownerID, actorID uint, record *model.ProductDistribution) error {
 	if record.Audience == "" {
 		record.Audience = "unclassified"
 	}
@@ -595,7 +591,7 @@ func (s *Store) saveProductDistribution(ownerID, actorID uint, record *model.Pro
 			}
 			environmentName = environment.Name
 		}
-		event := model.ProductDistributionEvent{Audience: record.Audience, BecamePublished: becamePublished, DistributionID: record.ID, EnvironmentID: record.EnvironmentID, EnvironmentName: environmentName, DeploymentIDs: append([]uint(nil), record.DeploymentIDs...), ActorID: actorID, Status: record.Status, PlatformVersion: record.PlatformVersion, BuildIdentifier: record.BuildIdentifier, Notes: record.Notes}
+		event := model.ProductDistributionEvent{Audience: record.Audience, BecamePublished: becamePublished, DistributionID: record.ID, EnvironmentID: record.EnvironmentID, EnvironmentName: environmentName, DeploymentIDs: append([]uint(nil), record.DeploymentIDs...), ActorID: ownerID, Status: record.Status, PlatformVersion: record.PlatformVersion, BuildIdentifier: record.BuildIdentifier, Notes: record.Notes}
 		if err := tx.Create(&event).Error; err != nil {
 			return err
 		}

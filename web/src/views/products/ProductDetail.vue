@@ -45,7 +45,7 @@
       </SurfaceCard>
     </div>
     <ProjectEnvironments v-else-if="tab === 'environments' && product.project_id" :project-i-d="String(product.project_id)" :transferred-applications="product.transferred_applications" embedded @changed="refreshProduct" />
-    <ProductLifecycle v-else-if="['tasks', 'versions', 'distributions'].includes(tab)" :key="product.id + '-' + tab" :product="product" :kind="tab" :initial-version-id="lifecycleVersionID" :wechat-return="wechatReturn" @changed="refreshProduct" @select-version="id => showVersionRecords('tasks', id)" @select-distributions="id => showVersionRecords('distributions', id)" @show-channels="openEditor('channels')" @update-release-units="updateReleaseUnits" @close-wechat="wechatReturn = null" />
+    <ProductLifecycle v-else-if="['tasks', 'versions', 'distributions'].includes(tab)" :key="product.id + '-' + tab" :product="product" :kind="tab" :initial-version-id="lifecycleVersionID" @changed="refreshProduct" @select-version="id => showVersionRecords('tasks', id)" @select-distributions="id => showVersionRecords('distributions', id)" @show-channels="openEditor('channels')" @update-release-units="updateReleaseUnits" />
     <ProductEditor :project-mode="projectMode" :open="editorOpen && Boolean(product)" :initial-tab="editorTab" :product="product" :busy="busy" @close="editorOpen = false" @save="save" />
     <ConfirmDialog teleport :open="archiveOpen" :title="projectMode ? '归档项目' : '归档产品'" :message="projectMode ? '归档后项目将移入已归档列表，并退出活跃项目和行动汇总。已有部署资源不会被修改。可通过编辑基本信息恢复阶段。' : '归档后产品将移入已归档列表，并退出活跃产品和行动汇总。已有部署资源不会被修改。可通过编辑产品恢复阶段。'" confirm-text="归档" :busy="busy" @cancel="archiveOpen = false" @confirm="archive" />
     <ProductDeleteDialog :project-mode="projectMode" :open="Boolean(deleteTarget)" :product="deleteTarget" :busy="busy" @cancel="deleteTarget = null" @confirm="remove" />
@@ -85,7 +85,6 @@ const tab = ref('overview'), editorTab = ref('basics'), editorOpen = ref(false),
 const lifecycleVersionID = ref('')
 const deleteTarget = ref(null)
 const projectActions = ref(null)
-const wechatReturn = ref(null)
 async function load() { await resource.refresh(routeID.value); if (resource.error.value) error.value = resource.error.value.message
   if (!props.projectMode && product.value?.project_id) await router.replace({ path: '/projects/' + product.value.project_id, query: route.query })
 }
@@ -127,14 +126,8 @@ async function remove() {
   try { if (props.projectMode) await deleteProjectWorkspace(product.value.project_id); else await deleteProduct(id); deleteTarget.value = null; await router.push(props.projectMode ? '/projects' : '/products') }
   catch (cause) { error.value = cause.message } finally { busy.value = false }
 }
-watch(() => [props.projectMode, routeID.value], () => { resource.data.value = null; editorOpen.value = false; archiveOpen.value = false; deleteTarget.value = null; lifecycleVersionID.value = ''; wechatReturn.value = null; applyRouteTab(route.query?.tab); void load() }, { immediate: true })
+watch(() => [props.projectMode, routeID.value], () => { resource.data.value = null; editorOpen.value = false; archiveOpen.value = false; deleteTarget.value = null; lifecycleVersionID.value = ''; applyRouteTab(route.query?.tab); void load() }, { immediate: true })
 watch(() => route.query?.tab, applyRouteTab)
-watch([product, () => route.query?.wechat_authorization], ([item, status]) => {
-  if (!item || (!props.projectMode && item.project_id) || !['connected', 'failed', 'missing-scope'].includes(status)) return
-  const { wechat_authorization, wechat_channel, ...query } = route.query
-  wechatReturn.value = { status, channelID: Number(wechat_channel) }
-  void router.replace({ query })
-}, { immediate: true })
 </script>
 
 <style scoped>

@@ -41,13 +41,9 @@ func newClient() *Client {
 }
 
 func (c *Client) call(ctx context.Context, method, path, access string, input, output any) error {
-	return c.callWithCredential(ctx, method, path, "access_token", access, input, output)
-}
-
-func (c *Client) callWithCredential(ctx context.Context, method, path, credential, access string, input, output any) error {
 	target := c.base + path
 	if access != "" {
-		target += "?" + url.Values{credential: {access}}.Encode()
+		target += "?" + url.Values{"access_token": {access}}.Encode()
 	}
 	var data []byte
 	if input != nil {

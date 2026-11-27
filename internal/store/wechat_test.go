@@ -2,12 +2,70 @@ package store
 
 import (
 	"errors"
+	"path/filepath"
 	"testing"
 	"time"
 
 	"github.com/cylism/cylism-manager/internal/model"
 	"gorm.io/gorm"
 )
+
+func TestRetireWeChatThirdPartyCredentialsPreservesDirectConnection(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "wechat-upgrade.db")
+	s, err := New(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	product, item := linkedWeChatChannel(t, s)
+	now := time.Now().UTC().Truncate(time.Second)
+	issue := model.ProductDistribution{ProductID: product.ID, ChannelID: item.ChannelID,
+		Status: "published", Audience: "production", PlatformVersion: "0.4.0", WeChatPublishedAt: &now}
+	if err := s.SaveProductDistribution(product.OwnerID, &issue); err != nil {
+		t.Fatal(err)
+	}
+	metric := model.WeChatDailyMetric{ChannelID: item.ChannelID, Day: "2026-11-27", Metric: "visits", FetchedAt: now}
+	if err := s.SaveWeChatMetrics(item, []model.WeChatDailyMetric{metric}, ""); err != nil {
+		t.Fatal(err)
+	}
+	for _, query := range []string{
+		"ALTER TABLE product_we_chat_connections ADD COLUMN encrypted_refresh_token TEXT",
+		"ALTER TABLE product_we_chat_connections ADD COLUMN component_app_id TEXT",
+		"ALTER TABLE product_we_chat_connections ADD COLUMN authorized_at INTEGER",
+		"ALTER TABLE product_we_chat_connections ADD COLUMN auth_state_hash TEXT",
+		"ALTER TABLE product_we_chat_connections ADD COLUMN auth_expires_at DATETIME",
+		"UPDATE product_we_chat_connections SET encrypted_refresh_token = 'cached-grant', component_app_id = 'component', authorized_at = 1, auth_state_hash = 'pending', auth_expires_at = CURRENT_TIMESTAMP",
+		"CREATE TABLE we_chat_component_tickets (app_id TEXT PRIMARY KEY, encrypted_ticket TEXT)",
+		"INSERT INTO we_chat_component_tickets VALUES ('component', 'cached-ticket')",
+	} {
+		if err := s.db.Exec(query).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
+	for range 2 {
+		upgraded, err := New(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var grants int64
+		err = upgraded.db.Table("product_we_chat_connections").
+			Where("encrypted_refresh_token <> '' OR component_app_id <> '' OR authorized_at <> 0 OR auth_state_hash <> '' OR auth_expires_at IS NOT NULL").
+			Count(&grants).Error
+		if err != nil || grants != 0 || upgraded.db.Migrator().HasTable("we_chat_component_tickets") {
+			t.Fatalf("legacy credentials remain: %d, %v", grants, err)
+		}
+		got, err := upgraded.WeChatConnection(product.OwnerID, item.ProductID, item.ChannelID)
+		if err != nil || got.AppID != item.AppID || got.EncryptedAppSecret != item.EncryptedAppSecret {
+			t.Fatalf("direct connection changed: %#v, %v", got, err)
+		}
+		if samples, err := upgraded.WeChatMetrics(item.ChannelID, ""); err != nil || len(samples) != 1 || samples[0].Metric != metric.Metric {
+			t.Fatalf("daily metrics changed: %#v, %v", samples, err)
+		}
+		issues, total, err := upgraded.ListProductDistributions(product.OwnerID, product.ID, model.ProductLifecycleFilter{Limit: 10})
+		if err != nil || total != 1 || issues[0].WeChatPublishedAt == nil || !issues[0].WeChatPublishedAt.Equal(now) {
+			t.Fatalf("distribution history changed: %#v, %d, %v", issues, total, err)
+		}
+	}
+}
 
 func linkedWeChatChannel(t *testing.T, s *Store) (model.Product, model.ProductWeChatConnection) {
 	t.Helper()
@@ -24,127 +82,6 @@ func linkedWeChatChannel(t *testing.T, s *Store) (model.Product, model.ProductWe
 		t.Fatal(err)
 	}
 	return product, item
-}
-
-func grantWeChatChannel(t *testing.T, s *Store, product model.Product, item model.ProductWeChatConnection) model.ProductWeChatConnection {
-	t.Helper()
-	now := time.Now().UTC()
-	if err := s.StartWeChatAuthorization(item, "state", now.Add(time.Minute)); err != nil {
-		t.Fatal(err)
-	}
-	claimed, err := s.ClaimWeChatAuthorization("state", now)
-	if err != nil || claimed.ChannelID != item.ChannelID || claimed.AppID != item.AppID || claimed.AuthStateHash != "state" || claimed.AuthExpiresAt != nil {
-		t.Fatalf("claim: %#v, %v", claimed, err)
-	}
-	if _, err := s.ClaimWeChatAuthorization("state", now); !errors.Is(err, model.ErrWeChatAuthorization) {
-		t.Fatalf("repeated claim: %v", err)
-	}
-	if err := s.FinishWeChatAuthorization(claimed, "component", "encrypted-refresh", now.Unix()); err != nil {
-		t.Fatal(err)
-	}
-	granted, err := s.WeChatConnection(product.OwnerID, item.ProductID, item.ChannelID)
-	if err != nil || granted.EncryptedRefreshToken != "encrypted-refresh" || granted.AuthStateHash != "" {
-		t.Fatalf("grant: %#v, %v", granted, err)
-	}
-	return granted
-}
-
-func TestWeChatTicketKeepsNewestEvent(t *testing.T) {
-	s := setupTestDB(t)
-	for _, stamp := range []int64{5, 7, 6} {
-		if err := s.SaveWeChatTicket(&model.WeChatComponentTicket{AppID: "component", IssuedAt: stamp}); err != nil {
-			t.Fatal(err)
-		}
-	}
-	ticket, err := s.WeChatTicket("component")
-	if err != nil || ticket.IssuedAt != 7 {
-		t.Fatalf("ticket: %#v, %v", ticket, err)
-	}
-}
-
-func TestWeChatImportKeepsManualReleaseAndFinishesDraft(t *testing.T) {
-	s := setupTestDB(t)
-	p, item := linkedWeChatChannel(t, s)
-	item = grantWeChatChannel(t, s, p, item)
-	version := model.ProductVersion{ProductID: p.ID, Name: "0.4.0", Status: "completed", ReleasedOn: "2026-11-27", Notes: "原有版本说明"}
-	if err := s.SaveProductVersion(p.OwnerID, &version); err != nil {
-		t.Fatal(err)
-	}
-	manual := model.ProductDistribution{ProductID: p.ID, VersionID: version.ID, ChannelID: item.ChannelID, PlatformVersion: version.Name, Status: "published", Audience: "production", Notes: "原有发行说明"}
-	draft := model.ProductDistribution{ProductID: p.ID, ChannelID: item.ChannelID, PlatformVersion: "0.5.0", Status: "approved", Audience: "production"}
-	testing := model.ProductDistribution{ProductID: p.ID, ChannelID: item.ChannelID, PlatformVersion: "0.5.0", Status: "draft", Audience: "testing"}
-	for _, row := range []*model.ProductDistribution{&manual, &draft, &testing} {
-		if err := s.SaveProductDistribution(p.OwnerID, row); err != nil {
-			t.Fatal(err)
-		}
-	}
-	first := time.Date(2026, 11, 27, 2, 43, 28, 0, time.UTC)
-	second := first.Add(20 * time.Hour)
-	for _, snap := range []model.WeChatReleaseSnapshot{
-		{OnlineVersion: "0.4.0", OnlineAt: &first, OnlineNotes: "微信说明"},
-		{OnlineVersion: "0.5.0", OnlineAt: &second},
-		{OnlineVersion: "0.5.0", OnlineAt: &second},
-		{OnlineVersion: "0.4.0", OnlineAt: &first},
-	} {
-		if err := s.ImportWeChatRelease(item, snap, time.Now()); err != nil {
-			t.Fatal(err)
-		}
-	}
-	var old, promoted, testRecord model.ProductDistribution
-	for index, id := range []uint{manual.ID, draft.ID, testing.ID} {
-		if err := s.db.First([]*model.ProductDistribution{&old, &promoted, &testRecord}[index], id).Error; err != nil {
-			t.Fatal(err)
-		}
-	}
-	if old.Notes != manual.Notes || old.VersionID != version.ID || old.WeChatPublishedAt == nil || !old.WeChatPublishedAt.Equal(first) {
-		t.Fatalf("manual release changed or duplicated: %#v", old)
-	}
-	if promoted.Status != "published" || promoted.VersionID == 0 || promoted.WeChatPublishedAt == nil || !promoted.WeChatPublishedAt.Equal(second) || testRecord.Status != "draft" {
-		t.Fatalf("draft promotion: %#v, test: %#v", promoted, testRecord)
-	}
-	var newVersion model.ProductVersion
-	if err := s.db.First(&newVersion, promoted.VersionID).Error; err != nil || newVersion.ReleasedOn != "2026-11-28" {
-		t.Fatalf("Shanghai calendar date: %#v, %v", newVersion, err)
-	}
-	filter := model.ProductLifecycleFilter{Limit: 10}
-	if _, n, err := s.ListProductDistributions(p.OwnerID, p.ID, filter); err != nil || n != 3 {
-		t.Fatalf("distribution count: %d, %v", n, err)
-	}
-	if _, n, err := s.ListProductDistributionEvents(p.OwnerID, p.ID, manual.ID, filter); err != nil || n != 1 {
-		t.Fatalf("manual events: %d, %v", n, err)
-	}
-	if events, n, err := s.ListProductDistributionEvents(p.OwnerID, p.ID, draft.ID, filter); err != nil || n != 2 || events[0].ActorID != 0 {
-		t.Fatalf("automatic events: %#v, %d, %v", events, n, err)
-	}
-	got, err := s.WeChatConnection(p.OwnerID, p.ID, item.ChannelID)
-	if err != nil || got.OnlineVersion != "0.5.0" {
-		t.Fatalf("out-of-order release: %#v, %v", got, err)
-	}
-}
-
-func TestWeChatImportRollsBackWhenHistoryWriteFails(t *testing.T) {
-	s := setupTestDB(t)
-	p, item := linkedWeChatChannel(t, s)
-	item = grantWeChatChannel(t, s, p, item)
-	if err := s.db.Exec(`CREATE TRIGGER reject_wechat_history BEFORE INSERT ON product_distribution_events
-		BEGIN SELECT RAISE(ABORT, 'history unavailable'); END`).Error; err != nil {
-		t.Fatal(err)
-	}
-	now := time.Now().UTC()
-	if err := s.ImportWeChatRelease(item, model.WeChatReleaseSnapshot{OnlineVersion: "1.0", OnlineAt: &now}, now); err == nil {
-		t.Fatal("expected history insert failure")
-	}
-	filter := model.ProductLifecycleFilter{Limit: 10}
-	if _, n, err := s.ListProductVersions(p.OwnerID, p.ID, filter); err != nil || n != 0 {
-		t.Fatalf("version count: %d, %v", n, err)
-	}
-	if _, n, err := s.ListProductDistributions(p.OwnerID, p.ID, filter); err != nil || n != 0 {
-		t.Fatalf("distribution count: %d, %v", n, err)
-	}
-	connection, err := s.WeChatConnection(p.OwnerID, p.ID, item.ChannelID)
-	if err != nil || connection.OnlineVersion != "" || connection.LastImportedAt != nil {
-		t.Fatalf("rollback state: %#v, %v", connection, err)
-	}
 }
 
 func TestWeChatConnectionOwnershipAndCleanup(t *testing.T) {
@@ -179,7 +116,7 @@ func TestWeChatConnectionOwnershipAndCleanup(t *testing.T) {
 	if rows, err := s.WeChatMetrics(item.ChannelID, ""); err != nil || len(rows) != 0 {
 		t.Fatalf("changed channel should remove analytics: %#v, %v", rows, err)
 	}
-	if err := saveMetric(); !errors.Is(err, model.ErrWeChatAuthorization) {
+	if err := saveMetric(); !errors.Is(err, model.ErrWeChatConnectionChanged) {
 		t.Fatalf("in-flight metrics repopulated disconnected channel: %v", err)
 	}
 }

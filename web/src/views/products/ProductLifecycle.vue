@@ -157,7 +157,7 @@
         <button type="button" class="btn" :disabled="busy" @click="editLinkedDeployments">编辑关联</button>
       </template>
     </BaseModal>
-    <WeChatChannelSettings v-if="kind === 'distributions' && hasWeChatChannels" :open="wechatOpen" :product="product" :authorization-return="wechatReturn" @close="wechatOpen = false; emit('close-wechat')" @changed="refreshWeChatRecords" />
+    <WeChatChannelSettings v-if="kind === 'distributions' && hasWeChatChannels" :open="wechatOpen" :product="product" @close="wechatOpen = false" />
     <ErrorNoticeModal :open="Boolean(error)" :message="error" teleport @close="error = ''" />
   </div>
 </template>
@@ -188,15 +188,14 @@ import { PAGE_SIZE_OPTIONS } from '../../composables/usePagination.js'
 import { labelFor, platforms, dateOnly } from './product-utils.js'
 import { taskStatuses, versionStatuses, distributionStatuses, lifecycleClass, deploymentCount, deploymentPath, releaseUnitName, versionLabel } from './lifecycle-utils.js'
 import { formatShortDateTime as formatTime } from '../../utils/formatters.js'
-const props = defineProps({ product: { type: Object, required: true }, kind: { type: String, required: true }, initialVersionId: { type: [Number, String], default: '' }, wechatReturn: Object })
-const emit = defineEmits(['changed', 'select-version', 'select-distributions', 'show-channels', 'update-release-units', 'close-wechat'])
+const props = defineProps({ product: { type: Object, required: true }, kind: { type: String, required: true }, initialVersionId: { type: [Number, String], default: '' } })
+const emit = defineEmits(['changed', 'select-version', 'select-distributions', 'show-channels', 'update-release-units'])
 const audience = ref('')
 const unitID = ref('')
 const unitsOpen = ref(false)
 const repositoriesOpen = ref(false)
 const wechatOpen = ref(false)
 const hasWeChatChannels = computed(() => weChatChannels(props.product).length > 0)
-watch(() => props.wechatReturn, result => { if (result && props.kind === 'distributions') wechatOpen.value = true }, { immediate: true })
 const versionSettings = ref(null)
 const distributionFiltersID = `distribution-filters-${useId()}`
 const distributionFiltersOpen = ref(Boolean(props.initialVersionId))
@@ -284,10 +283,6 @@ function openEditor(row = null, expandDeployments = false) {
 function updateUnits(units) {
   if (unitID.value && !units.some(unit => unit.id === unitID.value)) unitID.value = ''
   emit('update-release-units', units)
-}
-async function refreshWeChatRecords() {
-  await Promise.all([resource.refresh(), loadOptions()])
-  emit('changed')
 }
 async function save(record) {
   busy.value = true

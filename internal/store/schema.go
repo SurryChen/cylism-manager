@@ -29,9 +29,12 @@ func migrateSchema(db *gorm.DB) error {
 		&model.Product{}, &model.ProductChannel{}, &model.ProductProject{}, &model.ProductApplication{}, &model.ProductReleaseUnit{},
 		&model.ProductTaskGroup{}, &model.ProductTask{}, &model.ProductVersion{}, &model.ProductVersionTask{}, &model.ProductVersionDeployment{}, &model.ProductVersionPlatformRelease{},
 		&model.ProductDistribution{}, &model.ProductDistributionEvent{},
-		&model.ProductWeChatConnection{}, &model.WeChatDailyMetric{}, &model.WeChatComponentTicket{},
+		&model.ProductWeChatConnection{}, &model.WeChatDailyMetric{},
 		&model.GitHubConnection{}, &model.GitHubRegistration{}, &model.ProductGitHubRepository{},
 	); err != nil {
+		return err
+	}
+	if err := removeLegacyWeChatCredentials(db); err != nil {
 		return err
 	}
 	if err := db.Exec("DROP INDEX IF EXISTS idx_product_version_name").Error; err != nil {

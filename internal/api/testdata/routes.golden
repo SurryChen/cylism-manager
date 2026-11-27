@@ -348,7 +348,6 @@ GET /api/sites
 GET /api/sites/:id
 GET /api/system-components
 GET /api/system/crds
-GET /api/wechat/component/authorized
 GET /api/workspace/overview
 GET /api/workspace/releases
 GET /health
@@ -533,9 +532,7 @@ POST /api/products/:id/github/repositories
 POST /api/products/:id/import-next-action
 POST /api/products/:id/lifecycle/:kind
 POST /api/products/:id/wechat/:channelID/analytics
-POST /api/products/:id/wechat/:channelID/authorize
 POST /api/products/:id/wechat/:channelID/code
-POST /api/products/:id/wechat/:channelID/releases/sync
 POST /api/products/clear
 POST /api/projects
 POST /api/projects/:projectID/environments
@@ -584,7 +581,6 @@ POST /api/servers/tailscale/connections/diagnose
 POST /api/settings/github/manifest
 POST /api/sites
 POST /api/system-components/:chart/revert
-POST /api/wechat/component/events
 PUT /api/admin/tables/:table/:id
 PUT /api/application-catalog/:catalogID
 PUT /api/applications/:id/capabilities

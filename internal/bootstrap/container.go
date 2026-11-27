@@ -33,7 +33,6 @@ type Config struct {
 	AccessTokenTTL  time.Duration
 	RefreshTokenTTL time.Duration
 	PlatformURL     string
-	WeChatComponent wechat.ComponentConfig
 }
 
 // Container is the application dependency container.
@@ -112,7 +111,7 @@ func NewContainer(cfg Config) (*Container, error) {
 			PlatformURL:     cfg.PlatformURL,
 		},
 	}
-	container.wechat = wechat.New(db, cfg.EncryptionKey, cfg.PlatformURL, cfg.WeChatComponent)
+	container.wechat = wechat.New(db, cfg.EncryptionKey)
 	container.Services = BuildServices(repos, client, container.Adapters, cfg.EncryptionKey)
 	container.components = systemapi.NewSystemComponentHandlerWithComposedDependencies(container.Store, container.Adapters.SystemComponent, container.Services.SystemComponent, container.Services.SystemComponentList)
 	return container, nil
@@ -168,7 +167,6 @@ func (c *Container) StartBackground(parent context.Context, config BackgroundCon
 	tasks := newBackgroundTasks(parent)
 	c.background = tasks
 	if c.wechat != nil {
-		tasks.Go(func(ctx context.Context) { runPeriodic(ctx, 5*time.Minute, c.wechat.PollReleases) })
 		tasks.Go(func(ctx context.Context) { runPeriodic(ctx, 6*time.Hour, c.wechat.PollAnalytics) })
 	}
 	if c.databaseOperations != nil {
