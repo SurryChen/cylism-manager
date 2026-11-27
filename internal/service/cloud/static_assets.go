@@ -34,7 +34,7 @@ type StaticAssetConfigStore interface {
 }
 
 type StaticAssetProvider interface {
-	SignStaticAssetUpload(bucket, key, contentType string, size int64, ttl time.Duration) (string, error)
+	SignStaticAssetUpload(bucket, key, contentType string, size int64, ttl time.Duration) (string, map[string]string, error)
 	PublishStaticImage(ctx context.Context, bucket, source, destination, contentType string, size int64) (string, error)
 }
 
@@ -86,9 +86,9 @@ func (s *StaticAssetService) SaveSettings(ctx context.Context, input StaticAsset
 }
 
 type StaticAssetUpload struct {
-	URL     string            `json:"upload_url"`
-	Headers map[string]string `json:"headers"`
-	Ticket  string            `json:"ticket"`
+	URL    string            `json:"upload_url"`
+	Fields map[string]string `json:"fields"`
+	Ticket string            `json:"ticket"`
 }
 
 type staticAssetTicket struct {
@@ -133,7 +133,7 @@ func (s *StaticAssetService) Issue(ownerID uint, contentType string, size int64)
 		Expires: time.Now().Add(2 * staticAssetTicketTTL),
 	}
 	pending, _ := ticket.keys()
-	uploadURL, err := provider.SignStaticAssetUpload(settings.Bucket, pending, contentType, size, staticAssetTicketTTL)
+	uploadURL, fields, err := provider.SignStaticAssetUpload(settings.Bucket, pending, contentType, size, staticAssetTicketTTL)
 	if err != nil {
 		return StaticAssetUpload{}, errors.New("生成 OSS 上传地址失败")
 	}
@@ -145,9 +145,7 @@ func (s *StaticAssetService) Issue(ownerID uint, contentType string, size int64)
 	if err != nil {
 		return StaticAssetUpload{}, errors.New("生成上传凭证失败")
 	}
-	return StaticAssetUpload{URL: uploadURL, Ticket: ciphertext, Headers: map[string]string{
-		"Content-Type": contentType, "x-oss-object-acl": "private", "x-oss-forbid-overwrite": "true",
-	}}, nil
+	return StaticAssetUpload{URL: uploadURL, Fields: fields, Ticket: ciphertext}, nil
 }
 
 func (s *StaticAssetService) Publish(ctx context.Context, ownerID uint, ciphertext string) (string, error) {

@@ -11,9 +11,9 @@ afterEach(() => {
 it('sends image bytes to OSS and only sends metadata and ticket to Manager', async () => {
   const file = new File(['test'], 'icon.png', { type: 'image/png' })
   const uploadURL = 'https://bucket.example/pending/icon.png?signature=test'
-  const headers = { 'Content-Type': 'image/png' }
+  const fields = { 'Content-Type': 'image/png', key: 'pending/icon.png' }
   const publicURL = 'https://bucket.example/images/icon.png'
-  api.post.mockResolvedValueOnce({ upload_url: uploadURL, headers, ticket: 'test-ticket' }).mockResolvedValueOnce({ url: publicURL })
+  api.post.mockResolvedValueOnce({ upload_url: uploadURL, fields, ticket: 'test-ticket' }).mockResolvedValueOnce({ url: publicURL })
   const directUpload = vi.fn().mockResolvedValue({ ok: true })
   vi.stubGlobal('fetch', directUpload)
 
@@ -22,7 +22,8 @@ it('sends image bytes to OSS and only sends metadata and ticket to Manager', asy
     ['/cloud/static-assets/uploads', { content_type: file.type, size: file.size }],
     ['/cloud/static-assets/uploads/publish', { ticket: 'test-ticket' }],
   ])
-  expect(directUpload).toHaveBeenCalledExactlyOnceWith(uploadURL, {
-    method: 'PUT', headers, body: file, credentials: 'omit', redirect: 'error',
-  })
+  const [[target, options]] = directUpload.mock.calls
+  expect(target).toBe(uploadURL)
+  expect(options).toMatchObject({ method: 'POST', credentials: 'omit', redirect: 'error' })
+  expect(Array.from(options.body.entries())).toEqual([...Object.entries(fields), ['file', file]])
 })

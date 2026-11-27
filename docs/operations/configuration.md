@@ -37,7 +37,7 @@ kubectl -n cylism-system rollout status deployment/cylism-manager
 
 在「云服务 → 对象存储 → 静态资源」选择已有的云连接和专用 Bucket。Manager 从云连接读取访问凭据，从 Bucket 信息取得地域。
 
-保持 Bucket 私有，并将 Manager 的 HTTPS 来源加入 Bucket 的 CORS 规则，允许 `PUT` 以及 `content-type`、`x-oss-object-acl`、`x-oss-forbid-overwrite` 请求头。云连接需要在专用桶内上传、读取、复制、删除对象及设置对象 ACL 的权限。
+保持 Bucket 私有，并将 Manager 的 HTTPS 来源加入 Bucket 的 CORS 规则，允许 `POST`。云连接需要在专用桶内上传、读取、复制、删除对象及设置对象 ACL 的权限。
 
 浏览器使用五分钟有效的 OSS 上传签名，把 PNG 或 JPEG 直传到 `pending/`。Manager 通过 OSS 校验大小、类型和图片尺寸，再复制到 `images/` 并让该对象支持公开读。项目只保存匿名读取验证通过的 URL。尚未完成发布的对象保存在私有前缀，可通过 OSS 生命周期规则按需清理。
 

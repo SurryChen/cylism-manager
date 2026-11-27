@@ -6,14 +6,16 @@ export const getStaticAssetSettings = () => api.get(base + '/settings')
 export const setStaticAssetSettings = settings => api.put(base + '/settings', settings)
 
 export async function uploadStaticImage(file) {
-  const { upload_url, headers, ticket } = await api.post(base + '/uploads', {
+  const { upload_url, fields, ticket } = await api.post(base + '/uploads', {
     content_type: file.type,
     size: file.size,
   })
+  const body = new FormData()
+  for (const [key, value] of Object.entries(fields)) body.append(key, value)
+  body.append('file', file)
   const response = await fetch(upload_url, {
-    method: 'PUT',
-    headers,
-    body: file,
+    method: 'POST',
+    body,
     credentials: 'omit',
     redirect: 'error',
   }).catch(() => { throw new Error('无法直传 OSS，请检查网络及存储桶跨域配置') })

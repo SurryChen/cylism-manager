@@ -2,6 +2,10 @@ package cloud
 
 import (
 	"context"
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -17,20 +21,37 @@ import (
 	cloudservice "github.com/cylism/cylism-manager/internal/service/cloud"
 )
 
-func (p *aliyunProvider) SignStaticAssetUpload(bucketName, key, contentType string, size int64, ttl time.Duration) (string, error) {
-	endpoint := "https://oss-" + p.region + ".aliyuncs.com"
-	signer, err := oss.New(endpoint, p.accessKeyID, p.accessKeySecret, oss.Region(p.region),
-		oss.AuthVersion(oss.AuthV4), oss.AdditionalHeaders([]string{"content-length"}))
-	if err != nil {
-		return "", err
+func (p *aliyunProvider) SignStaticAssetUpload(bucketName, key, contentType string, size int64, ttl time.Duration) (string, map[string]string, error) {
+	now := time.Now().UTC()
+	day := now.Format("20060102")
+	credential := strings.Join([]string{p.accessKeyID, day, p.region, "oss", "aliyun_v4_request"}, "/")
+	fields := map[string]string{
+		"key": key, "Content-Type": contentType, "x-oss-object-acl": "private",
+		"x-oss-forbid-overwrite": "true", "success_action_status": "200",
+		"x-oss-signature-version": "OSS4-HMAC-SHA256", "x-oss-credential": credential,
+		"x-oss-date": now.Format("20060102T150405Z"),
 	}
-	bucket, err := signer.Bucket(bucketName)
-	if err != nil {
-		return "", err
+	conditions := []any{map[string]string{"bucket": bucketName}, []any{"content-length-range", size, size}}
+	for field, value := range fields {
+		conditions = append(conditions, map[string]string{field: value})
 	}
-	return bucket.SignURL(key, oss.HTTPPut, int64(ttl/time.Second),
-		oss.ContentType(contentType), oss.ContentLength(size), oss.ObjectACL(oss.ACLPrivate),
-		oss.SetHeader("x-oss-forbid-overwrite", "true"))
+	policy, err := json.Marshal(map[string]any{"expiration": now.Add(ttl).Format(time.RFC3339), "conditions": conditions})
+	if err != nil {
+		return "", nil, err
+	}
+	fields["policy"] = base64.StdEncoding.EncodeToString(policy)
+	signingKey := []byte("aliyun_v4" + p.accessKeySecret)
+	for _, segment := range []string{day, p.region, "oss", "aliyun_v4_request"} {
+		signingKey = ossPolicyHMAC(signingKey, segment)
+	}
+	fields["x-oss-signature"] = hex.EncodeToString(ossPolicyHMAC(signingKey, fields["policy"]))
+	return fmt.Sprintf("https://%s.oss-%s.aliyuncs.com/", bucketName, p.region), fields, nil
+}
+
+func ossPolicyHMAC(key []byte, value string) []byte {
+	hash := hmac.New(sha256.New, key)
+	_, _ = io.WriteString(hash, value)
+	return hash.Sum(nil)
 }
 
 func (p *aliyunProvider) PublishStaticImage(ctx context.Context, bucketName, source, destination, contentType string, size int64) (string, error) {

@@ -1,7 +1,7 @@
 package cloud
 
 import (
-	"net/url"
+	"encoding/base64"
 	"strings"
 	"testing"
 	"time"
@@ -9,19 +9,18 @@ import (
 
 func TestStaticAssetUploadSignature(t *testing.T) {
 	provider := &aliyunProvider{region: "cn-guangzhou", accessKeyID: "test-key", accessKeySecret: "test-secret"}
-	signed, err := provider.SignStaticAssetUpload("test-assets", "pending/example.png", "image/png", 1234, 5*time.Minute)
+	endpoint, fields, err := provider.SignStaticAssetUpload("test-assets", "pending/example.png", "image/png", 1234, 5*time.Minute)
 	if err != nil {
 		t.Fatal(err)
 	}
-	parsed, err := url.Parse(signed)
+	policy, err := base64.StdEncoding.DecodeString(fields["policy"])
 	if err != nil {
 		t.Fatal(err)
 	}
-	query := parsed.Query()
-	if parsed.Host != "test-assets.oss-cn-guangzhou.aliyuncs.com" || parsed.Path != "/pending/example.png" ||
-		query.Get("x-oss-signature-version") != "OSS4-HMAC-SHA256" ||
-		!strings.Contains(query.Get("x-oss-additional-headers"), "content-length") ||
-		query.Get("x-oss-signature") == "" {
-		t.Fatalf("unexpected signed upload URL: %s", signed)
+	if endpoint != "https://test-assets.oss-cn-guangzhou.aliyuncs.com/" ||
+		fields["x-oss-signature-version"] != "OSS4-HMAC-SHA256" || len(fields["x-oss-signature"]) != 64 ||
+		!strings.Contains(string(policy), `["content-length-range",1234,1234]`) ||
+		!strings.Contains(string(policy), `"key":"pending/example.png"`) {
+		t.Fatalf("unexpected OSS upload policy: %s", policy)
 	}
 }
