@@ -113,6 +113,8 @@ func registerDeliveryRoutes(r *gin.Engine, apiGroup *gin.RouterGroup, h delivery
 	connections.POST("/:id/object-storage/containers", h.cloud.CreateContainer)
 	connections.PUT("/:id/object-storage/containers/:container", h.cloud.UpdateContainer)
 	connections.GET("/:id/object-storage/containers/:container/cors", h.cloud.GetContainerCORS)
+	connections.GET("/:id/object-storage/containers/:container/public-access", h.cloud.GetBucketPublicAccess)
+	connections.PUT("/:id/object-storage/containers/:container/public-access", h.cloud.SetBucketPublicAccess)
 	connections.PUT("/:id/object-storage/containers/:container/cors", h.cloud.SetContainerCORS)
 	connections.DELETE("/:id/object-storage/containers/:container", h.cloud.DeleteContainer)
 	connections.GET("/:id/object-storage/containers/:container/objects", h.cloud.ListObjects)

@@ -130,6 +130,7 @@ GET /api/cloud/connections/:id/object-storage/containers
 GET /api/cloud/connections/:id/object-storage/containers/:container/cors
 GET /api/cloud/connections/:id/object-storage/containers/:container/object
 GET /api/cloud/connections/:id/object-storage/containers/:container/objects
+GET /api/cloud/connections/:id/object-storage/containers/:container/public-access
 GET /api/cloud/connections/:id/permissions
 GET /api/cloud/databases
 GET /api/cloud/databases/:id
@@ -599,6 +600,7 @@ PUT /api/cloud/connections/:id
 PUT /api/cloud/connections/:id/dns/records/:recordID
 PUT /api/cloud/connections/:id/object-storage/containers/:container
 PUT /api/cloud/connections/:id/object-storage/containers/:container/cors
+PUT /api/cloud/connections/:id/object-storage/containers/:container/public-access
 PUT /api/cloud/databases/:id/admin
 PUT /api/cloud/databases/:id/connection
 PUT /api/cloud/databases/:id/gateway

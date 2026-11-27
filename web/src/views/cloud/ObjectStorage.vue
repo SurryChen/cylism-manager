@@ -34,7 +34,7 @@
                 <td class="cell-primary"><button class="link-button" :data-testid="'open-container-' + item.name" type="button" @click="openObjects(item)">{{ item.name }}</button></td>
                 <td class="cell-secondary">{{ item.region || '-' }}</td>
                 <td><span class="badge badge-offline">{{ item.storage_class || '-' }}</span></td>
-                <TableActionCell><div class="btn-group"><button class="btn btn-sm" type="button" @click="openContainer(item)"><Pencil :size="14" />编辑</button><button class="btn btn-sm" :data-testid="'container-cors-' + item.name" type="button" @click="openCORS(item)"><Globe2 :size="14" />跨域</button><button class="btn btn-sm btn-danger" type="button" @click="requestDeleteContainer(item)"><Trash2 :size="14" />删除</button></div></TableActionCell>
+                <TableActionCell><div class="btn-group"><button class="btn btn-sm" type="button" @click="openContainer(item)"><Pencil :size="14" />编辑</button><button class="btn btn-sm" :data-testid="'container-cors-' + item.name" type="button" @click="openCORS(item)"><Globe2 :size="14" />跨域</button><button v-if="selectedCloudIsAliyun" class="btn btn-sm" :data-testid="'container-public-access-' + item.name" type="button" @click="openPublicAccess(item)"><Shield :size="14" />公共访问</button><button class="btn btn-sm btn-danger" type="button" @click="requestDeleteContainer(item)"><Trash2 :size="14" />删除</button></div></TableActionCell>
               </tr>
             </tbody>
           </DataTable>
@@ -70,6 +70,18 @@
         <div class="form-row"><label class="form-group"><span class="form-label">访问权限</span><SelectMenu v-model="containerForm.acl" class="form-select" aria-label="访问权限" :options="aclOptions" /></label><label class="form-group"><span class="form-label">版本控制</span><SelectMenu v-model="containerForm.versioning" class="form-select" aria-label="版本控制" :options="versioningOptions" /></label></div>
       </form>
       <template #actions><button class="btn" type="button" @click="closeContainerForm">取消</button><button class="btn btn-primary" data-testid="container-save" type="button" @click="saveContainer">保存</button></template>
+    </BaseModal>
+
+    <BaseModal :open="Boolean(publicAccess)" :title="`公共访问 · ${publicAccess?.bucket || ''}`" size="medium" :show-close="!publicAccessSaving" :close-on-overlay="!publicAccessSaving" :close-on-escape="!publicAccessSaving" @close="closePublicAccess">
+      <EmptyState v-if="publicAccessLoading" variant="loading" message="正在读取公共访问配置..." />
+      <div v-else-if="publicAccess" class="cors-form">
+        <label class="cors-switch"><input v-model="blockPublicAccess" type="checkbox" :disabled="publicAccessSaving"><span>阻止公共访问</span></label>
+        <p class="cell-secondary">开启后，OSS 会拒绝匿名读取。关闭后，已有的公开权限会重新生效，也可以给单个对象设置公开读。</p>
+      </div>
+      <template #actions>
+        <button class="btn" type="button" :disabled="publicAccessSaving" @click="closePublicAccess">取消</button>
+        <button class="btn btn-primary" type="button" :disabled="publicAccessLoading || publicAccessSaving || publicAccess?.original === blockPublicAccess" @click="savePublicAccess">{{ publicAccessSaving ? '保存中...' : '保存' }}</button>
+      </template>
     </BaseModal>
 
     <BaseModal :open="Boolean(corsContainer)" :title="`跨域访问 · ${corsContainer?.name || ''}`" size="large" @close="closeCORS">
@@ -122,8 +134,8 @@ import { useListPage } from '../../composables/useListPage.js'
 import CursorPaginationControls from '../../components/CursorPaginationControls.vue'
 import { useCursorResource } from '../../composables/useCursorResource.js'
 import { computed, onMounted, reactive, ref, watch } from 'vue'
-import { Download, Globe2, Pencil, Plus, Trash2, Upload } from 'lucide-vue-next'
-import { createCloudContainer, deleteCloudContainer, deleteCloudObject, downloadCloudObjectURL, getCloudConnections, getCloudContainerCORS, getCloudContainers, getCloudObjects, updateCloudContainer, updateCloudContainerCORS, uploadCloudObject } from '../../api/cloud-resources.js'
+import { Download, Globe2, Pencil, Plus, Shield, Trash2, Upload } from 'lucide-vue-next'
+import { createCloudContainer, deleteCloudContainer, deleteCloudObject, downloadCloudObjectURL, getCloudBucketPublicAccess, getCloudConnections, getCloudContainerCORS, getCloudContainers, getCloudObjects, setCloudBucketPublicAccess, updateCloudContainer, updateCloudContainerCORS, uploadCloudObject } from '../../api/cloud-resources.js'
 import BaseModal from '../../components/BaseModal.vue'
 import ConfirmDialog from '../../components/ConfirmDialog.vue'
 import EmptyState from '../../components/EmptyState.vue'
@@ -149,6 +161,49 @@ const corsContainer = ref(null); const corsLoading = ref(false); const corsSavin
 let corsRequest = 0; let nextCORSRuleKey = 0
 const newContainer = () => ({ name: '', region: '', acl: 'private', versioning: '' }); const containerForm = reactive(newContainer())
 const connectionOptions = computed(() => connections.value.map(item => ({ value: item.id, label: item.name === providerNames[item.provider] ? providerNames[item.provider] : `${item.name} · ${providerNames[item.provider] || item.provider}` })))
+const selectedCloudIsAliyun = computed(() => connections.value.some(item => item.id === connectionID.value && item.provider === 'aliyun'))
+const publicAccess = ref(null)
+const blockPublicAccess = ref(true)
+const publicAccessLoading = ref(false)
+const publicAccessSaving = ref(false)
+
+async function openPublicAccess(item) {
+  publicAccess.value = { connection: connectionID.value, bucket: item.name, region: item.region }
+  const target = publicAccess.value
+  publicAccessLoading.value = true
+  try {
+    const config = await getCloudBucketPublicAccess(target.connection, target.bucket, target.region)
+    if (publicAccess.value !== target) return
+    blockPublicAccess.value = config.block_public_access
+    publicAccess.value.original = config.block_public_access
+  } catch (cause) {
+    if (publicAccess.value !== target) return
+    publicAccess.value = null
+    actionError.value = cause.message
+  } finally {
+    if (publicAccess.value === target) publicAccessLoading.value = false
+  }
+}
+
+function closePublicAccess() {
+  if (!publicAccessSaving.value) publicAccess.value = null
+}
+
+async function savePublicAccess() {
+  if (!publicAccess.value || publicAccessLoading.value || publicAccessSaving.value) return
+  const { connection, bucket, region, original } = publicAccess.value
+  if (original === blockPublicAccess.value) return
+  publicAccessSaving.value = true
+  try {
+    await setCloudBucketPublicAccess(connection, bucket, { block_public_access: blockPublicAccess.value }, region)
+    publicAccess.value = null
+  } catch (cause) {
+    actionError.value = cause.message
+  } finally {
+    publicAccessSaving.value = false
+  }
+}
+
 const selectedContainerRegion = ref('')
 const containerRegion = computed(() => selectedContainerRegion.value)
 const assetSettingsOpen = ref(false)

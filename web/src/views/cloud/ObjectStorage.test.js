@@ -7,11 +7,13 @@ const cloud = vi.hoisted(() => ({
   deleteCloudContainer: vi.fn(),
   deleteCloudObject: vi.fn(),
   getCloudConnections: vi.fn(),
+  getCloudBucketPublicAccess: vi.fn(),
   getCloudContainers: vi.fn(),
   getCloudContainerCORS: vi.fn(),
   getCloudObjects: vi.fn(),
   updateCloudContainer: vi.fn(),
   updateCloudContainerCORS: vi.fn(),
+  setCloudBucketPublicAccess: vi.fn(),
   uploadCloudObject: vi.fn(),
   downloadCloudObjectURL: vi.fn(),
 }))
@@ -32,6 +34,28 @@ beforeEach(() => {
 })
 
 describe('ObjectStorage', () => {
+  it('reads and updates public access on the selected bucket and region', async () => {
+    cloud.getCloudBucketPublicAccess.mockResolvedValue({ block_public_access: true })
+    cloud.setCloudBucketPublicAccess.mockResolvedValue({ block_public_access: false })
+    const wrapper = mount(ObjectStorage)
+    await flushPromises()
+
+    await wrapper.get('[data-testid="container-public-access-assets"]').trigger('click')
+    await flushPromises()
+    const dialog = wrapper.get('[role="dialog"]')
+    const checkbox = dialog.get('input[type="checkbox"]')
+    const save = dialog.findAll('button').find(button => button.text() === '保存')
+    expect(checkbox.element.checked).toBe(true)
+    expect(save.element.disabled).toBe(true)
+    await checkbox.setValue(false)
+    await save.trigger('click')
+    await flushPromises()
+
+    expect(cloud.getCloudBucketPublicAccess).toHaveBeenCalledExactlyOnceWith(8, 'assets', 'cn-hangzhou')
+    expect(cloud.setCloudBucketPublicAccess).toHaveBeenCalledExactlyOnceWith(8, 'assets', { block_public_access: false }, 'cn-hangzhou')
+    wrapper.unmount()
+  })
+
   it('keeps container creation available while the remote bucket list is pending', async () => {
     let resolveContainers
     cloud.getCloudContainers.mockReturnValue(new Promise(resolve => { resolveContainers = resolve }))
