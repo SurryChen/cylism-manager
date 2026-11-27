@@ -45,7 +45,11 @@ func (p *aliyunProvider) SignStaticAssetUpload(bucketName, key, contentType stri
 		signingKey = ossPolicyHMAC(signingKey, segment)
 	}
 	fields["x-oss-signature"] = hex.EncodeToString(ossPolicyHMAC(signingKey, fields["policy"]))
-	return fmt.Sprintf("https://%s.oss-%s.aliyuncs.com/", bucketName, p.region), fields, nil
+	return p.staticAssetEndpoint(bucketName), fields, nil
+}
+
+func (p *aliyunProvider) staticAssetEndpoint(bucket string) string {
+	return fmt.Sprintf("https://%s.%s.oss.aliyuncs.com/", bucket, p.region)
 }
 
 func ossPolicyHMAC(key []byte, value string) []byte {
@@ -59,7 +63,7 @@ func (p *aliyunProvider) PublishStaticImage(ctx context.Context, bucketName, sou
 	if err != nil {
 		return "", errors.New("读取静态资源桶失败")
 	}
-	publicURL := fmt.Sprintf("https://%s.oss-%s.aliyuncs.com/%s", bucketName, p.region, destination)
+	publicURL := p.staticAssetEndpoint(bucketName) + destination
 	if publicStaticImage(ctx, publicURL, contentType, size) {
 		return publicURL, nil
 	}

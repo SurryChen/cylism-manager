@@ -19,7 +19,11 @@ export async function uploadStaticImage(file) {
     credentials: 'omit',
     redirect: 'error',
   }).catch(() => { throw new Error('无法直传 OSS，请检查网络及存储桶跨域配置') })
-  if (!response.ok) throw new Error(`OSS 上传失败（HTTP ${response.status}）`)
+  if (!response.ok) {
+    const error = await response.text().catch(() => '')
+    const code = error.match(/<Code>([A-Za-z0-9]{1,64})<\/Code>/)?.[1]
+    throw new Error(`OSS 上传失败（HTTP ${response.status}${code ? `，${code}` : ''}）`)
+  }
   const { url } = await api.post(base + '/uploads/publish', { ticket })
   return url
 }

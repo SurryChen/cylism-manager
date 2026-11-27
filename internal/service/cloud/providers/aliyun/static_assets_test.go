@@ -17,7 +17,7 @@ func TestStaticAssetUploadSignature(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if endpoint != "https://test-assets.oss-cn-guangzhou.aliyuncs.com/" ||
+	if endpoint != "https://test-assets.cn-guangzhou.oss.aliyuncs.com/" ||
 		fields["x-oss-signature-version"] != "OSS4-HMAC-SHA256" || len(fields["x-oss-signature"]) != 64 ||
 		!strings.Contains(string(policy), `["content-length-range",1234,1234]`) ||
 		!strings.Contains(string(policy), `"key":"pending/example.png"`) {
