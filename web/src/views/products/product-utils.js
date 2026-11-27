@@ -17,6 +17,17 @@ export const linkKinds = [
   { id: 'requirements', label: '需求文档' }, { id: 'documentation', label: '技术文档' }, { id: 'other', label: '其他资料' },
 ]
 export const labelFor = (options, id) => options.find(item => item.id === id)?.label || id
+
+export function webURL(value) {
+  if (!value) return null
+  try {
+    const url = new URL(value)
+    return ['https:', 'http:'].includes(url.protocol) && url.hostname && !url.username && !url.password ? url : null
+  } catch {
+    return null
+  }
+}
+
 export const stageClass = id => ({ operating: 'badge-online', developing: 'badge-deploying', paused: 'badge-warn', archived: 'badge-offline' })[id] || 'badge-offline'
 export const channelClass = id => ({ published: 'badge-online', approved: 'badge-online', in_review: 'badge-deploying', rejected: 'badge-danger', blocked: 'badge-danger', ready: 'badge-warn' })[id] || 'badge-offline'
 export const dueClass = state => state === 'overdue' ? 'badge-danger' : ['today', 'soon'].includes(state) ? 'badge-warn' : 'badge-offline'

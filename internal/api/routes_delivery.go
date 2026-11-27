@@ -91,6 +91,12 @@ func registerDeliveryRoutes(r *gin.Engine, apiGroup *gin.RouterGroup, h delivery
 	chartRepositories.DELETE("/:id", h.chart.Delete)
 	chartRepositories.POST("/:id/verify", h.chart.Verify)
 
+	assets := apiGroup.Group("/cloud/static-assets")
+	assets.GET("/settings", h.cloud.StaticAssetSettings)
+	assets.PUT("/settings", h.cloud.SaveStaticAssetSettings)
+	assets.POST("/uploads", h.cloud.SignStaticAsset)
+	assets.POST("/uploads/publish", h.cloud.PublishStaticAsset)
+
 	connections := apiGroup.Group("/cloud/connections")
 	apiGroup.GET("/cloud/providers", h.cloud.ListProviders)
 	connections.GET("", h.cloud.ListConnections)

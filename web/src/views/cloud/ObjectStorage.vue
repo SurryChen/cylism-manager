@@ -19,6 +19,7 @@
           </div>
           <div class="storage-toolbar-actions">
             <span class="storage-count">{{ containersLoading ? '读取中...' : `共 ${containerPage.total.value} 个容器` }}</span>
+            <button class="btn" type="button" @click="openAssetSettings">静态资源</button>
             <button class="btn btn-primary" data-testid="container-create" type="button" @click="openContainer()"><Plus :size="16" />新增存储容器</button>
           </div>
         </div>
@@ -42,6 +43,25 @@
       <ResourcePagination :resource="containerPage" label="存储容器分页" />
     </SurfaceCard>
     </div>
+
+    <BaseModal :open="assetSettingsOpen" title="静态资源" size="medium" :show-close="!assetSaving" :close-on-overlay="!assetSaving" :close-on-escape="!assetSaving" @close="assetSettingsOpen = false">
+      <EmptyState v-if="assetLoading" variant="loading" message="正在读取静态资源配置..." />
+      <form v-else id="static-asset-settings" class="container-form" @submit.prevent="saveAssetSettings">
+        <label class="form-group"><span class="form-label">云连接</span>
+          <SelectMenu v-model.number="assetConnectionID" aria-label="静态资源云连接" :options="connectionOptions" :disabled="assetSaving" />
+        </label>
+        <label class="form-group"><span class="form-label">存储桶</span>
+          <SelectMenu v-model="assetBucket" aria-label="静态资源存储桶" :disabled="assetSaving || assetBucketsLoading">
+            <option value="">{{ assetBucketsLoading ? '读取中…' : '请选择存储桶' }}</option>
+            <option v-for="item in assetBuckets" :key="item.name" :value="item.name">{{ item.name }} · {{ item.region }}</option>
+          </SelectMenu>
+        </label>
+      </form>
+      <template #actions>
+        <button class="btn" type="button" :disabled="assetSaving" @click="assetSettingsOpen = false">取消</button>
+        <button class="btn btn-primary" type="submit" form="static-asset-settings" :disabled="!assetBucket || assetLoading || assetBucketsLoading || assetSaving">保存</button>
+      </template>
+    </BaseModal>
 
     <BaseModal :open="containerFormOpen" :title="editingContainer ? '编辑存储容器' : '新增存储容器'" size="medium" @close="closeContainerForm">
       <form id="container-form" class="container-form" @submit.prevent="saveContainer">
@@ -103,7 +123,7 @@ import CursorPaginationControls from '../../components/CursorPaginationControls.
 import { useCursorResource } from '../../composables/useCursorResource.js'
 import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { Download, Globe2, Pencil, Plus, Trash2, Upload } from 'lucide-vue-next'
-import { createCloudContainer, deleteCloudContainer, deleteCloudObject, downloadCloudObjectURL, getCloudConnections, getCloudContainerCORS, getCloudObjects, updateCloudContainer, updateCloudContainerCORS, uploadCloudObject } from '../../api/cloud-resources.js'
+import { createCloudContainer, deleteCloudContainer, deleteCloudObject, downloadCloudObjectURL, getCloudConnections, getCloudContainerCORS, getCloudContainers, getCloudObjects, updateCloudContainer, updateCloudContainerCORS, uploadCloudObject } from '../../api/cloud-resources.js'
 import BaseModal from '../../components/BaseModal.vue'
 import ConfirmDialog from '../../components/ConfirmDialog.vue'
 import EmptyState from '../../components/EmptyState.vue'
@@ -112,6 +132,8 @@ import FeedbackBanner from '../../components/FeedbackBanner.vue'
 import SectionTabsHeader from '../../components/SectionTabsHeader.vue'
 import SelectMenu from '../../components/SelectMenu.vue'
 import SurfaceCard from '../../components/SurfaceCard.vue'
+
+import { getStaticAssetSettings, setStaticAssetSettings } from '../../api/static-assets.js'
 
 const pageTabs = [{ id: 'containers', label: '存储容器' }]
 const providerNames = { aliyun: '阿里云', tencent: '腾讯云', cloudcone: 'CloudCone' }
@@ -129,6 +151,67 @@ const newContainer = () => ({ name: '', region: '', acl: 'private', versioning: 
 const connectionOptions = computed(() => connections.value.map(item => ({ value: item.id, label: item.name === providerNames[item.provider] ? providerNames[item.provider] : `${item.name} · ${providerNames[item.provider] || item.provider}` })))
 const selectedContainerRegion = ref('')
 const containerRegion = computed(() => selectedContainerRegion.value)
+const assetSettingsOpen = ref(false)
+const assetLoading = ref(false)
+const assetSaving = ref(false)
+const assetConnectionID = ref(0)
+const assetBucket = ref('')
+const assetBuckets = ref([])
+const assetBucketsLoading = ref(false)
+let assetLoadSequence = 0
+
+async function openAssetSettings() {
+  assetSettingsOpen.value = true
+  assetLoading.value = true
+  try {
+    const settings = await getStaticAssetSettings()
+    if (!assetSettingsOpen.value) return
+    assetConnectionID.value = settings.connection_id || connectionID.value
+    assetBucket.value = settings.bucket || ''
+    await loadAssetBuckets(assetConnectionID.value)
+  } catch (error) {
+    assetSettingsOpen.value = false
+    actionError.value = error.message
+  } finally {
+    assetLoading.value = false
+  }
+}
+
+async function loadAssetBuckets(id) {
+  const sequence = ++assetLoadSequence
+  assetBuckets.value = []
+  assetBucketsLoading.value = true
+  try {
+    const items = await getCloudContainers(id)
+    if (sequence !== assetLoadSequence) return
+    assetBuckets.value = items
+    if (!items.some(item => item.name === assetBucket.value)) assetBucket.value = ''
+  } catch (error) {
+    if (sequence === assetLoadSequence) actionError.value = error.message
+  } finally {
+    if (sequence === assetLoadSequence) assetBucketsLoading.value = false
+  }
+}
+
+watch(assetConnectionID, id => {
+  if (assetLoading.value || !assetSettingsOpen.value) return
+  assetBucket.value = ''
+  void loadAssetBuckets(id)
+})
+
+async function saveAssetSettings() {
+  if (!assetBucket.value || assetSaving.value || assetBucketsLoading.value) return
+  assetSaving.value = true
+  try {
+    await setStaticAssetSettings({ connection_id: assetConnectionID.value, bucket: assetBucket.value })
+    assetSettingsOpen.value = false
+  } catch (error) {
+    actionError.value = error.message
+  } finally {
+    assetSaving.value = false
+  }
+}
+
 const confirmMessage = computed(() => confirmTarget.value?.type === 'container' ? `仅可删除空存储容器“${confirmTarget.value.item.name}”，确认继续？` : `确认删除对象“${confirmTarget.value?.item?.key || ''}”？`)
 const formatSize = size => { if (!size) return '0 B'; const units = ['B', 'KB', 'MB', 'GB']; const index = Math.min(Math.floor(Math.log(size) / Math.log(1024)), 3); return (size / 1024 ** index).toFixed(index ? 1 : 0) + ' ' + units[index] }
 const formatDate = value => value ? new Date(value).toLocaleString() : '-'

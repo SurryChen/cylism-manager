@@ -109,7 +109,7 @@ func (c *Container) BuildRouteDependencies() api.RouteDependencies {
 	applicationHandler := applicationapi.NewApplicationHandlerWithDependencies(c.Store, c.Services.ApplicationQuery, key, applicationapi.NewKubernetesAdapter(c.K8s)).WithClusterClientFactory(agentFactory.Client).WithServerAddressReader(c.Store).WithDelegationSecret(c.Auth.JWTSecret).WithAudit(c.Store)
 	image := deliveryapi.NewImageRegistryHandler(c.Store, key)
 	cloudResources := cloudservice.NewService(c.Store, key, cloudservice.ProviderRegistry{"aliyun": aliyunprovider.NewProvider})
-	cloud := cloudapi.NewHandler(cloudResources, c.Store)
+	cloud := cloudapi.NewHandler(cloudResources, c.Store).WithStaticAssets(cloudservice.NewStaticAssetService(cloudResources, c.Store, key))
 	nodeMirrors := deliveryapi.NewNodeRegistryMirrorHandlerWithDependencies(key, nodeMirrorApplier.Apply, c.Services.RegistryMirror).WithActualConfigInspector(nodeRegistryConfigInspector).WithK3sRestarter(nodeK3sRestarter).WithConfigSyncer(nodeMirrorApplier).WithAudit(c.Store)
 	managed := deliveryapi.NewManagedOCIRegistryHandlerWithDependencies(c.Store, c.Adapters.Registry.ManagedResources, c.Adapters.Registry.ManagedStatus, nodeMirrorApplier.Apply, c.Services.RegistryManaged, c.Services.RegistryCatalog)
 	proxy := deliveryapi.NewRegistryProxyHandlerWithDependencies(c.Store, key, c.Adapters.Registry.ProxyResources, c.Adapters.Registry.ProxyDiagnostics, c.Services.RegistryProxy).WithReconciler(c.Services.RegistryProxyReconciler).WithClusterClientFactory(agentFactory.Client)

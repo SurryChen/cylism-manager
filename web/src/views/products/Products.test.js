@@ -405,6 +405,141 @@ describe('personal products workflows', () => {
 
 
 describe('project workspace workflows', () => {
+  it('shows only a saved icon in the list and detail, with a letter fallback', async () => {
+    const product = {
+      id: 7, project_id: 12, name: '用户中心',
+      channels: [
+        { platform: 'app_store', public_url: 'https://apps.apple.com/app/example' },
+        { platform: 'web', public_url: 'https://account.example.com/login?source=testing' },
+      ],
+      links: [{ kind: 'repository', url: 'https://github.com/owner/account' }],
+    }
+    for (const component of [ProductCenter, ProductDetail]) {
+      const configured = { ...product, icon_url: 'https://account.example.com/assets/app-icon.svg' }
+      mocks.page.mockResolvedValue({ items: [product, { ...configured, id: 8 }], total: 2 })
+      mocks.get.mockResolvedValue(configured)
+      const page = mountPage(component, { projectMode: true })
+      try {
+        await flushPromises()
+        if (component === ProductCenter) expect(page.findAll('.product-mark')[0].text()).toBe('用')
+        expect(page.findAll('.product-mark img')).toHaveLength(1)
+        const image = page.get('.product-mark img')
+        expect(image.attributes('src')).toBe(configured.icon_url)
+        await image.trigger('error')
+        expect(page.find('.product-mark img').exists()).toBe(false)
+        expect(page.findAll('.product-mark').at(-1).text()).toBe('用')
+      } finally {
+        page.unmount()
+      }
+    }
+  })
+
+  it('fetches an icon only after the website address is submitted and includes it in the form save', async () => {
+    const loads = []
+    vi.stubGlobal('Image', class {
+      set src(url) {
+        this.url = url
+        loads.push(this)
+      }
+      removeAttribute() {}
+    })
+    const editor = mountPage(ProductEditor, { open: true, projectMode: true, product: { id: 7, name: '用户中心' } })
+    const button = text => editor.findAll('button').find(item => item.text() === text)
+    try {
+      const input = editor.get('.icon-input-row input')
+      expect(loads).toHaveLength(0)
+      await button('从网址获取').trigger('click')
+      expect(editor.findAll('.icon-input-row input')).toHaveLength(1)
+      expect(editor.get('.icon-input-row input').element).toBe(input.element)
+      expect(input.attributes('type')).toBe('text')
+      expect(editor.get(`label[for="${input.attributes('id')}"]`).text()).toBe('网站地址')
+      await input.setValue('account.example.com/login?from=portal')
+      await editor.get('form').trigger('submit')
+      expect(editor.emitted('save')).toBeUndefined()
+      expect(loads).toHaveLength(0)
+      await input.trigger('keydown.enter')
+      expect(loads.map(image => image.url)).toContain('https://account.example.com/favicon.ico')
+      const icon = loads.find(image => image.url === 'https://account.example.com/assets/app-icon.svg')
+      icon.naturalWidth = 32
+      icon.onload()
+      await flushPromises()
+      expect(input.attributes('type')).toBe('url')
+      expect(input.element.value).toBe(icon.url)
+      expect(button('从网址获取')).toBeDefined()
+      expect(editor.emitted('save')).toBeUndefined()
+      await editor.get('form').trigger('submit')
+      expect(editor.emitted('save')[0][0]).toMatchObject({ icon_url: icon.url })
+    } finally {
+      editor.unmount()
+      vi.unstubAllGlobals()
+    }
+  })
+
+  it('preserves the manual icon when a website lookup fails', async () => {
+    const loads = []
+    vi.stubGlobal('Image', class {
+      set src(url) { loads.push(this) }
+      removeAttribute() {}
+    })
+    const iconURL = 'https://example.com/manual.svg'
+    const editor = mountPage(ProductEditor, { open: true, product: { id: 7, name: '用户中心', icon_url: iconURL } })
+    const button = text => editor.findAll('button').find(item => item.text() === text)
+    try {
+      const input = editor.get('.icon-input-row input')
+      await button('从网址获取').trigger('click')
+      await input.setValue('https://example.com')
+      await button('获取图标').trigger('click')
+      loads.forEach(image => image.onerror())
+      await flushPromises()
+      expect(editor.get('.error-notice').text()).toContain('未找到可用的网站图标')
+      expect(input.element.value).toBe('https://example.com')
+      await editor.get('[data-testid="dismiss-error-notice"]').trigger('click')
+      await editor.get('[aria-label="取消获取图标"]').trigger('click')
+      expect(input.attributes('type')).toBe('url')
+      expect(input.element.value).toBe(iconURL)
+    } finally {
+      editor.unmount()
+      vi.unstubAllGlobals()
+    }
+  })
+
+  it('previews an uploaded icon and applies or removes it only on save', async () => {
+    const publicURL = 'https://assets.example/project-icons/0123456789abcdef0123456789abcdef.png'
+    const clipboard = vi.fn().mockResolvedValue(undefined)
+    const previousClipboard = Object.getOwnPropertyDescriptor(navigator, 'clipboard')
+    Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText: clipboard } })
+    const createPreview = vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:pending-icon')
+    const revokePreview = vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => {})
+    const editor = mountPage(ProductEditor, { open: true, projectMode: true, product: { id: 7, name: '同频词遇', icon_url: publicURL } })
+    try {
+      await editor.get('[aria-label="复制直链"]').trigger('click')
+      expect(clipboard).toHaveBeenCalledWith(publicURL)
+      const input = editor.get('input[type="file"]')
+      const file = new File(['icon'], 'icon.png', { type: 'image/png' })
+      Object.defineProperty(input.element, 'files', { value: [file] })
+      await input.trigger('change')
+      expect(createPreview).toHaveBeenCalledWith(file)
+      expect(editor.get('img[alt="图标预览"]').attributes('src')).toBe('blob:pending-icon')
+      expect(editor.text()).toContain('保存后可通过直链公开访问')
+      expect(editor.emitted('save')).toBeUndefined()
+      await editor.get('form').trigger('submit')
+      expect(editor.emitted('save')[0][0].iconFile).toBe(file)
+
+      await editor.get('[aria-label="取消选图"]').trigger('click')
+      expect(revokePreview).toHaveBeenCalledWith('blob:pending-icon')
+      expect(editor.get('img[alt="图标预览"]').attributes('src')).toBe(publicURL)
+      await editor.get('[aria-label="移除图标"]').trigger('click')
+      await editor.get('form').trigger('submit')
+      expect(editor.emitted('save')[1][0]).toMatchObject({ icon_url: '' })
+    } finally {
+      editor.unmount()
+      createPreview.mockRestore()
+      revokePreview.mockRestore()
+      if (previousClipboard) Object.defineProperty(navigator, 'clipboard', previousClipboard)
+      else delete navigator.clipboard
+    }
+  })
+
   it('uses the project ID for navigation and safe deletion while retaining lifecycle IDs', async () => {
     mocks.page.mockResolvedValue({ items: [{ id: 7, project_id: 12, name: 'App', stage: 'idea' }], total: 1 })
     const page = mountPage(ProductCenter, { projectMode: true })

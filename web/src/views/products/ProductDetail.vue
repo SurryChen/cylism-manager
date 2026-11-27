@@ -16,7 +16,7 @@
       <SurfaceCard :class="{ 'product-overview-card': projectMode }">
         <div class="product-overview-heading">
           <div class="product-overview-meta">
-            <span class="product-mark"><img v-if="product.icon_url" :src="product.icon_url" alt="产品图标" referrerpolicy="no-referrer" /><template v-else>{{ product.name.slice(0, 1) }}</template></span>
+            <ProductMark :product="product" />
             <span class="badge" :class="stageClass(product.stage)">{{ labelFor(stages, product.stage) }}</span>
             <span class="product-muted">更新于 {{ formatTime(product.updated_at) }}</span>
           </div>
@@ -68,6 +68,7 @@ import ConfirmDialog from '../../components/ConfirmDialog.vue'
 import ProjectEnvironments from '../applications/ProjectEnvironments.vue'
 import ProjectOverview from './ProjectOverview.vue'
 import ProductEditor from './ProductEditor.vue'
+import ProductMark from './ProductMark.vue'
 import ProductLifecycle from './ProductLifecycle.vue'
 import ProductDeleteDialog from './ProductDeleteDialog.vue'
 import { stages, linkKinds, labelFor, stageClass, editableProduct } from './product-utils.js'

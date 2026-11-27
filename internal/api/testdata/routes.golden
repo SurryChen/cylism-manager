@@ -156,6 +156,7 @@ GET /api/cloud/mysql-clusters/:id/runtime
 GET /api/cloud/mysql-clusters/:id/tasks
 GET /api/cloud/mysql-clusters/:id/tasks/:taskID/logs
 GET /api/cloud/providers
+GET /api/cloud/static-assets/settings
 GET /api/cluster-dns
 GET /api/clusters
 GET /api/clusters/:id
@@ -433,6 +434,8 @@ POST /api/cloud/mysql-clusters/:id/primary
 POST /api/cloud/mysql-clusters/:id/routers
 POST /api/cloud/mysql-clusters/:id/routers/repair-placement
 POST /api/cloud/mysql-clusters/:id/routers/scale-down
+POST /api/cloud/static-assets/uploads
+POST /api/cloud/static-assets/uploads/publish
 POST /api/cluster-dns
 POST /api/cluster-dns/history/:revision/rollback
 POST /api/clusters
@@ -604,6 +607,7 @@ PUT /api/cloud/databases/:id/resources
 PUT /api/cloud/mysql-clusters/:id/config
 PUT /api/cloud/mysql-clusters/:id/resource-pool
 PUT /api/cloud/mysql-clusters/:id/topology
+PUT /api/cloud/static-assets/settings
 PUT /api/clusters/:id
 PUT /api/clusters/:id/k8s/certs/dns-credentials/:id
 PUT /api/clusters/:id/k8s/certs/issuers/:kind/:namespace/:name

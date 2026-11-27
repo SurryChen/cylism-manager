@@ -1,13 +1,31 @@
 <template>
-  <BaseModal teleport :open="open" :title="product?.id ? section.title : projectMode ? '创建项目' : '创建产品'" size="large" :show-close="!busy" :close-on-overlay="!busy" :close-on-escape="!busy" @close="$emit('close')">
+  <BaseModal teleport :open="open" :title="product?.id ? section.title : projectMode ? '创建项目' : '创建产品'" size="large" :show-close="!busy" :close-on-overlay="!busy" :close-on-escape="!busy && !iconLookup.error.value && !iconError" @close="$emit('close')">
     <SectionTabsHeader :title="section.title" compact :tabs="[section]" :active-tab="tab" />
-    <form :id="formID" @submit.prevent="$emit('save', form)">
+    <form :id="formID" @submit.prevent="submit">
       <fieldset :disabled="busy" class="product-editor-fields">
         <div v-if="tab === 'basics'" class="product-form-grid">
           <label class="form-group product-full-width"><span class="form-label">名称 *</span><input v-model.trim="form.name" class="form-input" maxlength="128" required :aria-label="projectMode ? '项目名称' : '产品名称'" /></label>
           <label v-if="projectMode" class="form-group product-full-width"><span class="form-label">项目英文名（可选）</span><input v-model.trim="form.project_slug" class="form-input" maxlength="40" pattern="[a-z0-9]([-a-z0-9]*[a-z0-9])?" placeholder="留空自动生成，用于部署命名空间" :disabled="Boolean(product?.projects?.find(item => item.id === product.project_id)?.environments?.length)" /></label>
           <label class="form-group"><span class="form-label">阶段</span><SelectMenu v-model="form.stage" aria-label="产品阶段"><option v-for="item in stages" :key="item.id" :value="item.id">{{ item.label }}</option></SelectMenu></label>
-          <label class="form-group"><span class="form-label">图标地址（可选）</span><input v-model.trim="form.icon_url" class="form-input" type="url" placeholder="https://" /></label>
+          <div class="form-group product-full-width">
+            <label :for="iconInputID" class="form-label">{{ iconLookupOpen ? '网站地址' : iconFile ? '图标文件' : '图标地址（可选）' }}</label>
+            <div class="icon-input-row" :aria-busy="iconLookup.loading.value">
+              <img v-if="iconPreview && !iconLookupOpen" :src="iconPreview" alt="图标预览" class="icon-preview" referrerpolicy="no-referrer" />
+              <input :id="iconInputID" ref="iconInput" v-model.trim="iconInputValue" class="form-input" :type="iconLookupOpen || iconFile ? 'text' : 'url'" inputmode="url" :placeholder="iconLookupOpen ? '例如 example.com' : 'https://'" :readonly="Boolean(iconFile)" :disabled="iconLookup.loading.value" @keydown.enter="onIconInputEnter" />
+              <template v-if="iconLookupOpen">
+                <button type="button" class="btn" :disabled="!websiteAddress || iconLookup.loading.value" @click="fetchIcon">{{ iconLookup.loading.value ? '获取中…' : '获取图标' }}</button>
+                <button type="button" class="icon-button" title="取消获取图标" aria-label="取消获取图标" @click="setIconLookupMode(false)"><X :size="15" aria-hidden="true" /></button>
+              </template>
+              <template v-else>
+                <input ref="fileInput" type="file" accept="image/png,image/jpeg" hidden @change="selectIcon" />
+                <button v-if="!iconFile" type="button" class="icon-button" title="从网址获取" aria-label="从网址获取" @click="setIconLookupMode(true)"><Globe :size="15" aria-hidden="true" /><span class="sr-only">从网址获取</span></button>
+                <button type="button" class="icon-button" title="上传图标" aria-label="上传图标" @click="fileInput?.click()"><Upload :size="15" aria-hidden="true" /></button>
+                <button v-if="!iconFile && iconURL" type="button" class="icon-button" title="复制直链" aria-label="复制直链" @click="copyIconURL"><Copy :size="15" aria-hidden="true" /></button>
+                <button v-if="iconFile || form.icon_url" type="button" class="icon-button" :title="iconFile ? '取消选图' : '移除图标'" :aria-label="iconFile ? '取消选图' : '移除图标'" @click="clearIcon"><X :size="15" aria-hidden="true" /></button>
+              </template>
+            </div>
+            <p v-if="iconFile && !iconLookupOpen" class="icon-note product-muted">支持 2 MiB 以内的 PNG 或 JPEG，宽高各不超过 1024 像素。保存后可通过直链公开访问。</p>
+          </div>
           <label v-if="projectMode" class="product-full-width product-muted"><input v-model="form.platform_linked" type="checkbox" aria-label="关联当前管理平台" /> 关联当前管理平台的发布记录（管理 Cylism Manager 自身时使用）</label>
           <label class="form-group product-full-width"><span class="form-label">简介</span><textarea v-model="form.summary" class="form-input" maxlength="1024" /></label>
         </div>
@@ -82,32 +100,111 @@
         </template>
       </fieldset>
     </form>
-    <template #actions><button class="btn" :disabled="busy" @click="$emit('close')">取消</button><button class="btn btn-primary" :disabled="busy" type="submit" :form="formID">{{ busy ? '保存中...' : product?.id ? '保存' : projectMode ? '创建项目' : '创建产品' }}</button></template>
+    <template #actions><button class="btn" :disabled="busy" @click="$emit('close')">取消</button><button class="btn btn-primary" :disabled="busy || iconLookupOpen" type="submit" :form="formID">{{ busy ? '保存中...' : product?.id ? '保存' : projectMode ? '创建项目' : '创建产品' }}</button></template>
   </BaseModal>
+  <ErrorNoticeModal teleport :open="Boolean(iconLookup.error.value)" title="图标获取失败" :message="iconLookup.error.value?.message || ''" @close="iconLookup.error.value = null" />
+  <ErrorNoticeModal teleport :open="Boolean(iconError)" :message="iconError" @close="iconError = ''" />
 </template>
 
 <script setup>
-import { computed, ref, useId, watch } from 'vue'
-import { ChevronDown, Plus, Trash2 } from 'lucide-vue-next'
+import { computed, nextTick, ref, useId, watch } from 'vue'
+import { ChevronDown, Copy, Globe, Plus, Trash2, Upload, X } from 'lucide-vue-next'
 import BaseModal from '../../components/BaseModal.vue'
 import EmptyState from '../../components/EmptyState.vue'
+import ErrorNoticeModal from '../../components/ErrorNoticeModal.vue'
 import SectionTabsHeader from '../../components/SectionTabsHeader.vue'
 import SelectMenu from '../../components/SelectMenu.vue'
-import { editableProduct, stages, platforms, channelStatuses, channelClass, labelFor, linkKinds } from './product-utils.js'
+import { useAsyncResource } from '../../composables/useAsyncResource.js'
+import { editableProduct, webURL, stages, platforms, channelStatuses, channelClass, labelFor, linkKinds } from './product-utils.js'
+import { findWebsiteIcon } from './website-icon.js'
 
 const props = defineProps({ projectMode: Boolean, open: Boolean, busy: Boolean, initialTab: { type: String, default: 'basics' }, product: { type: Object, default: null }, options: { type: Object, default: () => ({ projects: [], applications: [] }) } })
-defineEmits(['close', 'save'])
+const emit = defineEmits(['close', 'save'])
 const formID = `product-form-${useId()}`
+const iconInputID = `${formID}-icon`
 const form = ref(editableProduct())
+const iconLookup = useAsyncResource(findWebsiteIcon)
+const iconLookupOpen = ref(false)
+const websiteAddress = ref('')
+const iconInput = ref(null)
+const fileInput = ref(null)
+const iconFile = ref(null)
+const iconError = ref('')
+const localIconPreview = ref('')
+const iconURL = computed(() => webURL(form.value.icon_url)?.href)
+const iconPreview = computed(() => localIconPreview.value || (form.value.icon_url === props.product?.icon_url ? iconURL.value : ''))
+const iconInputValue = computed({
+  get: () => {
+    if (iconLookupOpen.value) return websiteAddress.value
+    return iconFile.value?.name || form.value.icon_url
+  },
+  set(value) {
+    if (iconLookupOpen.value) websiteAddress.value = value
+    else form.value.icon_url = value
+  },
+})
+watch(iconFile, (file, _, onCleanup) => {
+  const url = file ? URL.createObjectURL(file) : ''
+  localIconPreview.value = url
+  if (url) onCleanup(() => URL.revokeObjectURL(url))
+})
 const tab = ref('basics')
 const tabs = [{ id: 'basics', label: '基本信息', title: '编辑基本信息' }, { id: 'links', label: '资料链接', title: '管理资料链接' }, { id: 'channels', label: '发行渠道', title: '管理发行渠道' }, { id: 'resources', label: '资源关联', title: '管理资源关联' }]
 const section = computed(() => tabs.find(item => item.id === tab.value))
 watch(() => props.open, open => {
+  iconLookup.cancel()
+  iconLookup.error.value = null
+  iconError.value = ''
+  iconFile.value = null
+  iconLookupOpen.value = false
+  websiteAddress.value = ''
   if (!open) return
   form.value = editableProduct(props.product || {})
   tab.value = tabs.some(item => item.id === props.initialTab) ? props.initialTab : 'basics'
   if (tab.value === 'channels' && !form.value.channels.length) addChannel()
 }, { immediate: true })
+function submit() {
+  if (props.busy || iconLookupOpen.value) return
+  emit('save', iconFile.value ? { ...form.value, icon_url: '', iconFile: iconFile.value } : form.value)
+}
+function selectIcon(event) {
+  const file = event.target.files?.[0]
+  event.target.value = ''
+  if (!file) return
+  if (file.size > 2 * 1024 * 1024 || !['image/png', 'image/jpeg'].includes(file.type)) {
+    iconError.value = '请选择 2 MB 以内的 PNG 或 JPEG 图片'
+    return
+  }
+  iconFile.value = file
+}
+function clearIcon() {
+  if (iconFile.value) iconFile.value = null
+  else form.value.icon_url = ''
+}
+async function copyIconURL() {
+  try {
+    await navigator.clipboard.writeText(iconURL.value)
+  } catch {
+    iconError.value = '复制失败，请手动复制图标地址'
+  }
+}
+function setIconLookupMode(open) {
+  if (!open) iconLookup.cancel()
+  iconLookupOpen.value = open
+  void nextTick(() => iconInput.value?.focus())
+}
+function onIconInputEnter(event) {
+  if (!iconLookupOpen.value) return
+  event.preventDefault()
+  void fetchIcon()
+}
+async function fetchIcon() {
+  if (!websiteAddress.value || iconLookup.loading.value || props.busy) return
+  const url = await iconLookup.refresh(websiteAddress.value)
+  if (!url || !props.open || !iconLookupOpen.value) return
+  form.value.icon_url = url
+  setIconLookupMode(false)
+}
 function addChannel() {
   if (form.value.channels.length >= 30) return
   form.value.channels.push({ platform: 'web', name: '', publish_status: 'draft', app_identifier: '', admin_url: '', public_url: '', online_version: '', pending_version: '', notes: '' })
@@ -121,6 +218,11 @@ function projectName(id) { return props.options.projects.find(item => item.id ==
 
 <style scoped>
 .product-editor-fields { min-width: 0; padding: 0; border: 0; margin: 0; }
+.icon-input-row { display: flex; align-items: center; gap: var(--space-8); }
+.icon-input-row .form-input { min-width: 0; }
+.icon-input-row .btn, .icon-input-row .icon-button { flex: none; white-space: nowrap; }
+.icon-preview { flex: none; width: 34px; height: 34px; border-radius: var(--radius-control); object-fit: contain; }
+.icon-note { margin: var(--space-4) 0 0; font-size: 12px; }
 .channel-intro { margin: 0 0 var(--space-16); }
 .channel-heading-label { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-8); min-width: 0; }
 .channel-heading-label strong { overflow-wrap: anywhere; font-size: 13px; }

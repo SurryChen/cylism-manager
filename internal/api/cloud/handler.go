@@ -19,8 +19,9 @@ import (
 )
 
 type Handler struct {
-	service *cloudservice.Service
-	audit   auditservice.Repository
+	staticAssets *cloudservice.StaticAssetService
+	service      *cloudservice.Service
+	audit        auditservice.Repository
 }
 
 func NewHandler(service *cloudservice.Service, audit auditservice.Repository) *Handler {
