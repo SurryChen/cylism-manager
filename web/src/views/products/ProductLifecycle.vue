@@ -32,6 +32,7 @@
           <button type="button" class="btn btn-primary" :disabled="busy || optionsLoading || Boolean(optionsError)" @click="openEditor()">新增版本</button>
         </div>
         <div v-else-if="kind === 'distributions'" class="distribution-toolbar-actions">
+          <button v-if="hasWeChatChannels" type="button" class="btn" @click="wechatOpen = true">微信接入</button>
           <button v-if="product.channels?.length" type="button" class="icon-button" title="发行渠道" aria-label="发行渠道" @click="$emit('show-channels')"><Settings :size="16" aria-hidden="true" /></button>
           <button type="button" class="btn btn-primary" :disabled="busy || Boolean(product.channels?.length && (optionsLoading || optionsError))" @click="product.channels?.length ? openEditor() : $emit('show-channels')">{{ product.channels?.length ? '新增发行记录' : '添加发行渠道' }}</button>
         </div>
@@ -98,7 +99,7 @@
                 <span class="cell-secondary product-line">{{ row.environment_id ? row.deployment_ids?.length ? `${row.deployment_ids.length} 个部署组件` : '尚未关联部署组件' : '环境待定' }}</span>
               </td>
               <td><span class="badge" :class="lifecycleClass(row.status)">{{ labelFor(distributionStatuses, row.status) }}</span></td>
-              <td>{{ formatTime(row.updated_at) }}<span class="cell-secondary product-line lifecycle-description">{{ row.notes }}</span></td>
+              <td>{{ formatTime(row.updated_at) }}<span v-if="row.wechat_published_at" class="cell-secondary product-line">微信上线 {{ formatTime(row.wechat_published_at) }}</span><span class="cell-secondary product-line lifecycle-description">{{ row.notes }}</span></td>
               <TableActionCell><div class="btn-group"><button class="icon-button" title="发行历史" aria-label="发行历史" @click="showHistory(row)"><History :size="15" /></button><button class="icon-button" title="编辑发行记录" aria-label="编辑发行记录" :disabled="busy || optionsLoading || Boolean(optionsError)" @click="openEditor(row)"><Pencil :size="15" /></button></div></TableActionCell>
             </tr>
           </tbody>
@@ -156,6 +157,7 @@
         <button type="button" class="btn" :disabled="busy" @click="editLinkedDeployments">编辑关联</button>
       </template>
     </BaseModal>
+    <WeChatChannelSettings v-if="kind === 'distributions' && hasWeChatChannels" :open="wechatOpen" :product="product" :authorization-return="wechatReturn" @close="wechatOpen = false; emit('close-wechat')" @changed="refreshWeChatRecords" />
     <ErrorNoticeModal :open="Boolean(error)" :message="error" teleport @close="error = ''" />
   </div>
 </template>
@@ -178,18 +180,23 @@ import ProductTaskBoard from './ProductTaskBoard.vue'
 import ProductTaskItem from './ProductTaskItem.vue'
 import ReleaseUnitManager from './ReleaseUnitManager.vue'
 import ProductGitHubRepositories from './ProductGitHubRepositories.vue'
+import WeChatChannelSettings from './WeChatChannelSettings.vue'
+import { weChatChannels } from '../../api/wechat.js'
 import { getLifecyclePage, getLifecycleOptions, getDistributionEvents, saveLifecycleRecord, deleteProductTask, importProductNextAction } from '../../api/product-lifecycle.js'
 import { usePaginatedResource } from '../../composables/usePaginatedResource.js'
 import { PAGE_SIZE_OPTIONS } from '../../composables/usePagination.js'
 import { labelFor, platforms, dateOnly } from './product-utils.js'
 import { taskStatuses, versionStatuses, distributionStatuses, lifecycleClass, deploymentCount, deploymentPath, releaseUnitName, versionLabel } from './lifecycle-utils.js'
 import { formatShortDateTime as formatTime } from '../../utils/formatters.js'
-const props = defineProps({ product: { type: Object, required: true }, kind: { type: String, required: true }, initialVersionId: { type: [Number, String], default: '' } })
-const emit = defineEmits(['changed', 'select-version', 'select-distributions', 'show-channels', 'update-release-units'])
+const props = defineProps({ product: { type: Object, required: true }, kind: { type: String, required: true }, initialVersionId: { type: [Number, String], default: '' }, wechatReturn: Object })
+const emit = defineEmits(['changed', 'select-version', 'select-distributions', 'show-channels', 'update-release-units', 'close-wechat'])
 const audience = ref('')
 const unitID = ref('')
 const unitsOpen = ref(false)
 const repositoriesOpen = ref(false)
+const wechatOpen = ref(false)
+const hasWeChatChannels = computed(() => weChatChannels(props.product).length > 0)
+watch(() => props.wechatReturn, result => { if (result && props.kind === 'distributions') wechatOpen.value = true }, { immediate: true })
 const versionSettings = ref(null)
 const distributionFiltersID = `distribution-filters-${useId()}`
 const distributionFiltersOpen = ref(Boolean(props.initialVersionId))
@@ -277,6 +284,10 @@ function openEditor(row = null, expandDeployments = false) {
 function updateUnits(units) {
   if (unitID.value && !units.some(unit => unit.id === unitID.value)) unitID.value = ''
   emit('update-release-units', units)
+}
+async function refreshWeChatRecords() {
+  await Promise.all([resource.refresh(), loadOptions()])
+  emit('changed')
 }
 async function save(record) {
   busy.value = true

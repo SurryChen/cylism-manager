@@ -325,6 +325,7 @@ func (h *Handler) SaveLifecycle(c *gin.Context) {
 			return
 		}
 		input := payload.ProductDistribution
+		input.WeChatPublishedAt = nil
 		input.KeepEnvironment = payload.EnvironmentID == nil
 		if payload.EnvironmentID != nil {
 			input.EnvironmentID = *payload.EnvironmentID

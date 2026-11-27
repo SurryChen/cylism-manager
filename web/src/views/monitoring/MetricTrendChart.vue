@@ -32,16 +32,18 @@ const props = defineProps({
   threshold: { type: Number, default: Number.NaN },
   loading: { type: Boolean, default: false },
   series: { type: Array, default: () => [] },
+  dateOnly: Boolean,
+  spanGaps: { type: Boolean, default: true },
 })
 
 const colors = ['#22736b', '#b86412', '#285f9a', '#9d4d22', '#5d6e3a', '#876235']
 const pointMap = computed(() => new Map(props.series.flatMap(item => item.values || []).map(point => [Number(point.timestamp), true])))
 const timestamps = computed(() => [...pointMap.value.keys()].sort((left, right) => left - right))
-const hasData = computed(() => timestamps.value.length > 0)
+const hasData = computed(() => props.series.some(item => item.values?.some(point => point.value != null)))
 const labels = computed(() => timestamps.value.map(formatTimestamp))
 const chartData = computed(() => {
   const dataSets = props.series.map((item, index) => {
-    const values = new Map((item.values || []).map(point => [Number(point.timestamp), Number(point.value)]))
+    const values = new Map((item.values || []).map(point => [Number(point.timestamp), point.value == null ? null : Number(point.value)]))
     const color = item.color || colors[index % colors.length]
     return {
       label: item.label,
@@ -49,10 +51,10 @@ const chartData = computed(() => {
       borderColor: color,
       backgroundColor: color,
       borderWidth: 2,
-      pointRadius: 0,
+      pointRadius: props.dateOnly ? 2 : 0,
       pointHitRadius: 7,
       tension: 0.28,
-      spanGaps: true,
+      spanGaps: props.spanGaps,
     }
   })
   if (Number.isFinite(props.threshold)) {
@@ -84,6 +86,7 @@ const chartOptions = computed(() => ({
 
 function formatTimestamp(timestamp) {
   const date = new Date(timestamp * 1000)
+  if (props.dateOnly) return date.toLocaleDateString('zh-CN', { month: 'numeric', day: 'numeric', timeZone: 'Asia/Shanghai' })
   return date.toLocaleString('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })
 }
 

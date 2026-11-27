@@ -16,6 +16,7 @@ import (
 	"github.com/cylism/cylism-manager/internal/bootstrap"
 	"github.com/cylism/cylism-manager/internal/model"
 	"github.com/cylism/cylism-manager/internal/service/auth"
+	"github.com/cylism/cylism-manager/internal/service/wechat"
 	"github.com/cylism/cylism-manager/internal/store"
 	"github.com/gin-gonic/gin"
 	"github.com/spf13/viper"
@@ -73,6 +74,10 @@ func main() {
 	viper.BindEnv("database.path", "DATABASE_PATH")
 	viper.BindEnv("auth.access_token_ttl", "ACCESS_TOKEN_TTL")
 	viper.BindEnv("auth.refresh_token_ttl", "REFRESH_TOKEN_TTL")
+	viper.BindEnv("wechat.component_app_id", "WECHAT_COMPONENT_APP_ID")
+	viper.BindEnv("wechat.component_app_secret", "WECHAT_COMPONENT_APP_SECRET")
+	viper.BindEnv("wechat.event_token", "WECHAT_EVENT_TOKEN")
+	viper.BindEnv("wechat.encoding_aes_key", "WECHAT_ENCODING_AES_KEY")
 	viper.BindEnv("operation_log.retention_days", "OPERATION_LOG_RETENTION_DAYS")
 	viper.SetDefault("server.host", "0.0.0.0")
 	viper.SetDefault("server.port", 8080)
@@ -112,6 +117,10 @@ func main() {
 		DBPath: dbPath, EncryptionKey: encKey, JWTSecret: jwtSecret,
 		AccessTokenTTL: accessTTL, RefreshTokenTTL: refreshTTL,
 		PlatformURL: viper.GetString("server.public_url"),
+		WeChatComponent: wechat.ComponentConfig{
+			AppID: viper.GetString("wechat.component_app_id"), AppSecret: viper.GetString("wechat.component_app_secret"),
+			EventToken: viper.GetString("wechat.event_token"), EncodingAESKey: viper.GetString("wechat.encoding_aes_key"),
+		},
 	})
 	if err != nil {
 		log.Fatalf("Failed to init database: %v", err)
@@ -138,7 +147,7 @@ func main() {
 	// 配置 Gin
 	gin.SetMode(gin.ReleaseMode)
 	r := gin.New()
-	r.Use(gin.LoggerWithConfig(gin.LoggerConfig{SkipPaths: []string{productapi.GitHubManifestCallbackPath}}), gin.Recovery())
+	r.Use(gin.LoggerWithConfig(gin.LoggerConfig{SkipPaths: []string{productapi.GitHubManifestCallbackPath, wechat.AuthorizationPath, wechat.EventPath}}), gin.Recovery())
 
 	// 注册路由
 	container.RegisterRoutes(r)

@@ -88,23 +88,24 @@ type ProductVersionPlatformRelease struct {
 
 // ProductDistribution is one channel submission; retries may be recorded separately.
 type ProductDistribution struct {
-	Audience        string    `gorm:"size:24;index;not null;default:unclassified" json:"audience"`
-	ID              uint      `gorm:"primaryKey" json:"id"`
-	ProductID       uint      `gorm:"index;not null" json:"product_id"`
-	VersionID       uint      `gorm:"index;not null" json:"version_id"`
-	ChannelID       uint      `gorm:"index;not null" json:"channel_id"`
-	EnvironmentID   uint      `gorm:"index;not null;default:0" json:"environment_id"`
-	EnvironmentName string    `gorm:"-" json:"environment_name,omitempty"`
-	DeploymentIDs   []uint    `gorm:"serializer:json;type:text" json:"deployment_ids"`
-	KeepEnvironment bool      `gorm:"-" json:"-"`
-	KeepDeployments bool      `gorm:"-" json:"-"`
-	PlatformVersion string    `gorm:"size:128;not null" json:"platform_version"`
-	BuildIdentifier string    `gorm:"size:128" json:"build_identifier"`
-	Status          string    `gorm:"size:24;index;not null" json:"status"`
-	Notes           string    `gorm:"type:text" json:"notes"`
-	Revision        uint      `gorm:"not null;default:1" json:"revision"`
-	CreatedAt       time.Time `json:"created_at"`
-	UpdatedAt       time.Time `json:"updated_at"`
+	Audience          string     `gorm:"size:24;index;not null;default:unclassified" json:"audience"`
+	ID                uint       `gorm:"primaryKey" json:"id"`
+	ProductID         uint       `gorm:"index;not null" json:"product_id"`
+	VersionID         uint       `gorm:"index;not null" json:"version_id"`
+	ChannelID         uint       `gorm:"index;not null" json:"channel_id"`
+	EnvironmentID     uint       `gorm:"index;not null;default:0" json:"environment_id"`
+	EnvironmentName   string     `gorm:"-" json:"environment_name,omitempty"`
+	DeploymentIDs     []uint     `gorm:"serializer:json;type:text" json:"deployment_ids"`
+	KeepEnvironment   bool       `gorm:"-" json:"-"`
+	KeepDeployments   bool       `gorm:"-" json:"-"`
+	PlatformVersion   string     `gorm:"size:128;not null" json:"platform_version"`
+	BuildIdentifier   string     `gorm:"size:128" json:"build_identifier"`
+	Status            string     `gorm:"size:24;index;not null" json:"status"`
+	Notes             string     `gorm:"type:text" json:"notes"`
+	WeChatPublishedAt *time.Time `json:"wechat_published_at,omitempty"`
+	Revision          uint       `gorm:"not null;default:1" json:"revision"`
+	CreatedAt         time.Time  `json:"created_at"`
+	UpdatedAt         time.Time  `json:"updated_at"`
 }
 
 // ProductDistributionEvent is append-only, including the original submission snapshot.

@@ -175,6 +175,9 @@ func (s *Store) SaveProduct(product *model.Product, projectIDs, applicationIDs [
 			}
 			keep = append(keep, channel.ID)
 		}
+		if err := deleteRemovedWeChatConnections(tx, product.ID, keep); err != nil {
+			return err
+		}
 		if err := tx.Where("product_id = ? AND id NOT IN ?", product.ID, keep).Delete(&model.ProductChannel{}).Error; err != nil {
 			return err
 		}

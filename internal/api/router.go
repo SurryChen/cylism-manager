@@ -15,6 +15,7 @@ import (
 	runtimeapi "github.com/cylism/cylism-manager/internal/api/runtime"
 	systemapi "github.com/cylism/cylism-manager/internal/api/system"
 	auditservice "github.com/cylism/cylism-manager/internal/service/audit"
+	"github.com/cylism/cylism-manager/internal/service/wechat"
 	"github.com/gin-gonic/gin"
 )
 
@@ -100,6 +101,8 @@ func RegisterRoutes(r *gin.Engine, deps RouteDependencies) {
 	registerPublicRoutes(r, deps.RuntimeAgent.Artifact, deps.RuntimeAgent.Agent)
 	registerAuthRoutes(r, deps.Auth.Handler, deps.Auth.Config)
 	if deps.Product != nil {
+		r.POST(wechat.EventPath, deps.Product.WeChatComponentEvent)
+		r.GET(wechat.AuthorizationPath, deps.Product.WeChatAuthorizationReturn)
 		r.GET(productapi.GitHubManifestCallbackPath, deps.Product.GitHubManifestCallback)
 		r.GET(productapi.GitHubInstallationReturnPath, productapi.GitHubInstallationReturn)
 	}

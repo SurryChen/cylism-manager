@@ -77,6 +77,7 @@
       </SurfaceCard>
     </div>
   </div>
+  <WeChatOverview :product="product" @error="emit('error', $event)" />
 </template>
 
 <script setup>
@@ -84,6 +85,7 @@ import { computed, watch } from 'vue'
 import { ExternalLink, GitBranch, Layers, Link2 } from 'lucide-vue-next'
 import SurfaceCard from '../../components/SurfaceCard.vue'
 import EmptyState from '../../components/EmptyState.vue'
+import WeChatOverview from './WeChatOverview.vue'
 import { getWorkspacePage } from '../../api/list-pages.js'
 import { getLifecyclePage } from '../../api/product-lifecycle.js'
 import { useAsyncResource } from '../../composables/useAsyncResource.js'

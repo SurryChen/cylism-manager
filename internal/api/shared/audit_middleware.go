@@ -72,6 +72,8 @@ func catalogedAuditAction(method, path string) (string, string, bool) {
 	}
 	resourceType := ""
 	switch {
+	case strings.HasSuffix(path, "/wechat/:channelID") || strings.HasSuffix(path, "/wechat/:channelID/authorize") || strings.HasSuffix(path, "/wechat/:channelID/releases/sync"):
+		resourceType = "wechat_integration"
 	case path == "/api/settings/github" || path == "/api/settings/github/manifest" || strings.Contains(path, "/github/repositories"):
 		resourceType = "github_integration"
 	case strings.Contains(path, "/access-certificates"):

@@ -12,6 +12,7 @@ import (
 
 	shared "github.com/cylism/cylism-manager/internal/api/shared"
 	"github.com/cylism/cylism-manager/internal/model"
+	"github.com/cylism/cylism-manager/internal/service/wechat"
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 )
@@ -30,6 +31,7 @@ type Repository interface {
 type Handler struct {
 	repository Repository
 	github     *githubIntegration
+	wechat     *wechat.Service
 }
 
 func NewHandler(repository Repository) *Handler { return &Handler{repository: repository} }

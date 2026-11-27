@@ -44,6 +44,10 @@ func deleteProducts(tx *gorm.DB, ownerID uint, ids []uint) (int64, error) {
 	if len(ids) == 0 {
 		return 0, nil
 	}
+	channels := tx.Model(&model.ProductWeChatConnection{}).Select("channel_id").Where("product_id IN ?", ids)
+	if err := tx.Where("channel_id IN (?)", channels).Delete(&model.WeChatDailyMetric{}).Error; err != nil {
+		return 0, err
+	}
 	distributions := tx.Model(&model.ProductDistribution{}).Select("id").Where("product_id IN ?", ids)
 	if err := tx.Where("distribution_id IN (?)", distributions).Delete(&model.ProductDistributionEvent{}).Error; err != nil {
 		return 0, err
@@ -54,7 +58,7 @@ func deleteProducts(tx *gorm.DB, ownerID uint, ids []uint) (int64, error) {
 			return 0, err
 		}
 	}
-	for _, record := range []interface{}{&model.ProductTask{}, &model.ProductTaskGroup{}, &model.ProductDistribution{}, &model.ProductVersion{}, &model.ProductChannel{}, &model.ProductGitHubRepository{}, &model.ProductReleaseUnit{}, &model.ProductProject{}, &model.ProductApplication{}} {
+	for _, record := range []interface{}{&model.ProductTask{}, &model.ProductTaskGroup{}, &model.ProductDistribution{}, &model.ProductVersion{}, &model.ProductWeChatConnection{}, &model.ProductChannel{}, &model.ProductGitHubRepository{}, &model.ProductReleaseUnit{}, &model.ProductProject{}, &model.ProductApplication{}} {
 		if err := tx.Where("product_id IN ?", ids).Delete(record).Error; err != nil {
 			return 0, err
 		}
